@@ -13,16 +13,27 @@ export default function LoginClient() {
   // Get redirect path (default to /app)
   const nextPath = searchParams.get("next") || "/app";
 
+  // Determine correct base URL (production-safe)
+  const getBaseURL = () => {
+    if (process.env.NEXT_PUBLIC_SITE_URL) {
+      return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, "");
+    }
+
+    if (typeof window !== "undefined") {
+      return window.location.origin;
+    }
+
+    return "http://localhost:3000";
+  };
+
   // 🔐 Redirect if already logged in
   useEffect(() => {
-    // Check existing session
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
         router.push(nextPath);
       }
     });
 
-    // Listen for login event (after magic link click)
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         if (session) {
@@ -39,11 +50,12 @@ export default function LoginClient() {
   const sendMagicLink = async () => {
     setMessage("");
 
+    const baseURL = getBaseURL();
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        // preserve ?next= all the way through callback
-        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        emailRedirectTo: `${baseURL}/auth/callback?next=${encodeURIComponent(
           nextPath
         )}`,
       },
