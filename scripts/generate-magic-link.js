@@ -5,6 +5,10 @@ const { createClient } = require("@supabase/supabase-js");
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Use your canonical domain from env if present, else fall back
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://convertmyemail.com")
+  .replace(/\/$/, "");
+
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   throw new Error(
     "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env.local"
@@ -17,16 +21,23 @@ const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 async function main() {
   const email = process.argv[2];
-  const nextArg = process.argv[3] || "/app"; // optional override
+  let nextArg = process.argv[3] || "/app"; // optional override
 
   if (!email) {
-    console.log("Usage: node scripts/generate-magic-link.js you@domain.com [/nextPath]");
-    console.log('Example: node scripts/generate-magic-link.js you@domain.com "/app"');
+    console.log(
+      "Usage: node scripts/generate-magic-link.js you@domain.com [/nextPath]"
+    );
+    console.log(
+      'Example: node scripts/generate-magic-link.js you@domain.com "/app"'
+    );
     process.exit(1);
   }
 
-  // ✅ Force custom domain + callback, preserve next
-  const redirectTo = `https://convertmyemail.com/auth/callback?next=${encodeURIComponent(
+  // Guard: ensure nextArg starts with "/"
+  if (!nextArg.startsWith("/")) nextArg = `/${nextArg}`;
+
+  // ✅ Force canonical domain + callback, preserve next
+  const redirectTo = `${SITE_URL}/auth/callback?next=${encodeURIComponent(
     nextArg
   )}`;
 
@@ -47,6 +58,7 @@ async function main() {
   const url = new URL(link);
   const embeddedRedirect = url.searchParams.get("redirect_to");
 
+  console.log("\nSite URL used:\n", SITE_URL);
   console.log("\nRequested redirectTo:\n", redirectTo);
   console.log("\nEmbedded redirect_to in generated link:\n", embeddedRedirect);
 
@@ -56,8 +68,8 @@ async function main() {
       "This almost always means your redirect URL is not allowlisted in Supabase Auth settings."
     );
     console.error("Fix in Supabase → Authentication → URL Configuration:");
-    console.error("- Site URL: https://convertmyemail.com");
-    console.error("- Redirect URLs include: https://convertmyemail.com/** (and optionally https://www.convertmyemail.com/**)");
+    console.error(`- Site URL: ${SITE_URL}`);
+    console.error(`- Redirect URLs include: ${SITE_URL}/** (and optionally https://www.convertmyemail.com/**)`);
     process.exit(2);
   }
 
