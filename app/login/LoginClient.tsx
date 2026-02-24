@@ -7,6 +7,9 @@ import { supabase } from "../../lib/supabase/browser";
 export default function LoginClient() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
+  const [cooldown, setCooldown] = useState(0);
+  const [isSending, setIsSending] = useState(false);
+
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -47,8 +50,22 @@ export default function LoginClient() {
     };
   }, [router, nextPath]);
 
+  // ⏳ Countdown timer effect
+  useEffect(() => {
+    if (cooldown <= 0) return;
+
+    const timer = setInterval(() => {
+      setCooldown((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
   const sendMagicLink = async () => {
+    if (isSending || cooldown > 0) return;
+
     setMessage("");
+    setIsSending(true);
 
     const baseURL = getBaseURL();
 
@@ -61,7 +78,16 @@ export default function LoginClient() {
       },
     });
 
-    setMessage(error ? error.message : "Check your email for the magic link!");
+    setIsSending(false);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setMessage("Check your email for the magic link!");
+    }
+
+    // 🔒 Start 45-second cooldown
+    setCooldown(45);
   };
 
   return (
@@ -80,10 +106,15 @@ export default function LoginClient() {
         />
 
         <button
-          className="mt-4 w-full rounded-xl bg-black text-white dark:bg-white dark:text-black py-3 font-medium"
+          disabled={isSending || cooldown > 0}
+          className="mt-4 w-full rounded-xl bg-black text-white dark:bg-white dark:text-black py-3 font-medium disabled:opacity-60"
           onClick={sendMagicLink}
         >
-          Send Magic Link
+          {cooldown > 0
+            ? `Try again in ${cooldown}s`
+            : isSending
+            ? "Sending..."
+            : "Send Magic Link"}
         </button>
 
         {message && (
