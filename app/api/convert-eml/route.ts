@@ -146,7 +146,6 @@ async function rowsToPdfBuffer(
     if (line) flush();
   };
 
-  // Start first page
   drawHeader();
 
   rows.forEach((r, idx) => {
@@ -188,7 +187,6 @@ async function rowsToPdfBuffer(
     y -= 14;
   });
 
-  // Add footers with correct total page count
   const pages = pdfDoc.getPages();
   const totalPages = pages.length;
   pages.forEach((page, i) => {
@@ -303,7 +301,6 @@ async function rowsToXlsxBuffer(
 
 export async function POST(req: Request) {
   try {
-    // Which output should we return to the browser?
     const url = new URL(req.url);
     const output = (url.searchParams.get("output") || "xlsx") as "xlsx" | "pdf";
 
@@ -392,13 +389,11 @@ export async function POST(req: Request) {
       return new NextResponse("No valid .eml files found.", { status: 400 });
     }
 
-    // Generate both outputs (so history always has both)
     const [xlsxBytes, pdfBuffer] = await Promise.all([
       rowsToXlsxBuffer(parsedRows),
       rowsToPdfBuffer(parsedRows),
     ]);
 
-    // Upload XLSX
     const xlsxPath = `${userId}/${Date.now()}-converted-emails.xlsx`;
     const upXlsx = await supabase.storage.from("conversions").upload(xlsxPath, xlsxBytes, {
       contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -409,7 +404,6 @@ export async function POST(req: Request) {
       return new NextResponse(`XLSX upload failed: ${upXlsx.error.message}`, { status: 500 });
     }
 
-    // Upload PDF
     const pdfPath = `${userId}/${Date.now()}-email-records.pdf`;
     const upPdf = await supabase.storage.from("conversions").upload(pdfPath, pdfBuffer, {
       contentType: "application/pdf",
@@ -420,7 +414,6 @@ export async function POST(req: Request) {
       return new NextResponse(`PDF upload failed: ${upPdf.error.message}`, { status: 500 });
     }
 
-    // History row
     const representativeEmlPath = uploadedEmlPaths[0];
     const displayName =
       parsedRows.length === 1 ? parsedRows[0].file_name : `${parsedRows.length} files`;
@@ -439,18 +432,20 @@ export async function POST(req: Request) {
       .single();
 
     if (convErr || !conversion) {
-      return new NextResponse(convErr?.message || "Failed to create conversion.", {
-        status: 500,
-      });
+      return new NextResponse(convErr?.message || "Failed to create conversion.", { status: 500 });
     }
 
-    // Return whichever output user requested
+    // Return whichever output user requested (force download behavior)
     if (output === "pdf") {
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": 'attachment; filename="email-records.pdf"',
+          "Cache-Control": "no-store",
+          "Pragma": "no-cache",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Length": String(pdfBuffer.byteLength),
           "X-Conversion-Id": conversion.id,
         },
       });
@@ -461,6 +456,10 @@ export async function POST(req: Request) {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
+        "Cache-Control": "no-store",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Length": String(xlsxBytes.byteLength),
         "X-Conversion-Id": conversion.id,
       },
     });

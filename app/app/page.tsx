@@ -21,9 +21,6 @@ export default function UploadPage() {
   const [files, setFiles] = useState<FileList | null>(null);
   const [status, setStatus] = useState<string>("");
 
-  // Which format to return immediately after conversion
-  const [convertFormat, setConvertFormat] = useState<"xlsx" | "pdf">("xlsx");
-
   // History
   const [history, setHistory] = useState<Conversion[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
@@ -76,7 +73,9 @@ export default function UploadPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to create download link");
 
-      window.location.href = json.url;
+      // ✅ Do NOT navigate away from the app.
+      // Open the signed URL in a new tab so the dashboard stays visible.
+      window.open(json.url, "_blank", "noopener,noreferrer");
     } catch (e: any) {
       setHistoryError(e?.message || "Download failed");
     } finally {
@@ -88,9 +87,7 @@ export default function UploadPage() {
     loadHistory();
   }, []);
 
-  const upload = async (formatOverride?: "xlsx" | "pdf") => {
-    const format = formatOverride ?? convertFormat;
-
+  const upload = async (format: "xlsx" | "pdf") => {
     if (!files || files.length === 0) {
       setStatus("Please select one or more .eml files.");
       return;
@@ -124,7 +121,7 @@ export default function UploadPage() {
       return;
     }
 
-    // Download the requested output immediately
+    // ✅ Download immediately without leaving the site
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -181,7 +178,6 @@ export default function UploadPage() {
             <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
               <div>
                 <div className="text-sm font-semibold">Dashboard</div>
-                <div className="text-[10px] text-gray-400">BUILD: pdf-button-v1</div>
                 <div className="text-xs text-gray-500">
                   Convert email files into clean records for storage or submission.
                 </div>
@@ -227,10 +223,7 @@ export default function UploadPage() {
 
                   <button
                     className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-                    onClick={() => {
-                      setConvertFormat("xlsx");
-                      upload("xlsx");
-                    }}
+                    onClick={() => upload("xlsx")}
                     disabled={!files || files.length === 0}
                     type="button"
                   >
@@ -239,10 +232,7 @@ export default function UploadPage() {
 
                   <button
                     className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                    onClick={() => {
-                      setConvertFormat("pdf");
-                      upload("pdf");
-                    }}
+                    onClick={() => upload("pdf")}
                     disabled={!files || files.length === 0}
                     type="button"
                   >
