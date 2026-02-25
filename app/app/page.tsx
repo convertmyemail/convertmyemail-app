@@ -52,6 +52,7 @@ export default function UploadPage() {
     }
   };
 
+  // ✅ Download without leaving the site (PDF downloads too)
   const downloadPath = async (
     id: string,
     path: string,
@@ -73,9 +74,37 @@ export default function UploadPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to create download link");
 
-      // ✅ Do NOT navigate away from the app.
-      // Open the signed URL in a new tab so the dashboard stays visible.
-      window.open(json.url, "_blank", "noopener,noreferrer");
+      const signedUrl = json.url as string;
+      if (!signedUrl) throw new Error("Missing signed URL");
+
+      // Fetch the file so we can trigger a download (no navigation)
+      const fileRes = await fetch(signedUrl);
+      if (!fileRes.ok) throw new Error("Failed to download file");
+
+      const blob = await fileRes.blob();
+
+      const objectUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+
+      // Try to use the storage filename; fallback to something friendly
+      const baseName = decodeURIComponent(
+        (path.split("/").pop() || "").split("?")[0] || ""
+      );
+
+      const fallbackName =
+        label === "pdf"
+          ? "email-records.pdf"
+          : label === "xlsx"
+            ? "converted-emails.xlsx"
+            : "converted-emails.csv";
+
+      a.download = baseName || fallbackName;
+
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objectUrl);
     } catch (e: any) {
       setHistoryError(e?.message || "Download failed");
     } finally {
@@ -316,7 +345,9 @@ export default function UploadPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Conversion history</h2>
-                  <p className="mt-1 text-sm text-gray-600">Download previously generated files.</p>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Download previously generated files.
+                  </p>
                 </div>
 
                 <button
@@ -364,7 +395,9 @@ export default function UploadPage() {
                               <div className="text-sm text-gray-900">
                                 {c.original_filename || "(unnamed)"}
                               </div>
-                              <div className="text-xs text-gray-500">ID: {c.id.slice(0, 8)}</div>
+                              <div className="text-xs text-gray-500">
+                                ID: {c.id.slice(0, 8)}
+                              </div>
                             </td>
 
                             <td className="py-3 pr-3 text-gray-600">
@@ -406,7 +439,9 @@ export default function UploadPage() {
 
                                 <button
                                   className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                                  onClick={() => c.pdf_path && downloadPath(c.id, c.pdf_path, "pdf")}
+                                  onClick={() =>
+                                    c.pdf_path && downloadPath(c.id, c.pdf_path, "pdf")
+                                  }
                                   disabled={!c.pdf_path || downloadingKey === pdfKey}
                                   type="button"
                                 >
