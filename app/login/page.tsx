@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
 
@@ -11,6 +11,10 @@ function safeNextPath(nextRaw: string | null) {
   return nextRaw;
 }
 
+function cleanBaseUrl(url: string) {
+  return (url || "").trim().replace(/\/$/, "");
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -18,6 +22,15 @@ export default function LoginPage() {
   const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [nextPath, setNextPath] = useState("/app");
+
+  // ✅ Canonical base URL for magic-link callbacks (fixes PKCE host mismatch)
+  const baseUrl = useMemo(() => {
+    const env = cleanBaseUrl(process.env.NEXT_PUBLIC_SITE_URL || "");
+    if (env) return env;
+    // fallback for local dev / missing env
+    if (typeof window !== "undefined") return cleanBaseUrl(window.location.origin);
+    return "";
+  }, []);
 
   // Read ?next= from the URL on the client (avoids build/prerender issues)
   useEffect(() => {
@@ -54,9 +67,10 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
-        nextPath
-      )}`;
+      // ✅ Always redirect to canonical domain if configured
+      const origin = baseUrl || window.location.origin;
+
+      const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
 
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
@@ -117,6 +131,11 @@ export default function LoginPage() {
               <p className="text-xs text-gray-500">
                 Redirect after login: <span className="font-medium text-gray-700">{nextPath}</span>
               </p>
+
+              {/* Optional: helpful debug line (remove anytime) */}
+              <p className="text-[10px] text-gray-400">
+                Callback base: <span className="font-medium">{baseUrl || "(window origin)"}</span>
+              </p>
             </div>
           </div>
         </section>
@@ -161,7 +180,8 @@ export default function LoginPage() {
               <div className="text-xs font-medium text-gray-700">Trouble?</div>
               <p className="mt-1 text-xs text-gray-600">
                 If you don’t see the email, check spam/junk and try again. Some providers delay
-                delivery briefly.
+                delivery briefly. Also make sure you open the magic link in the same browser you
+                used to request it.
               </p>
             </div>
           </div>

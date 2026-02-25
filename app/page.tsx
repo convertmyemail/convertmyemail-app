@@ -10,7 +10,11 @@ export default async function MarketingHome({
 }) {
   const sp = (await Promise.resolve(searchParams)) || {};
   const next = sp?.next ? encodeURIComponent(sp.next) : "";
-  const loginHref = next ? `/login?next=${next}` : "/login";
+
+  // ✅ Force login links to your canonical domain if configured
+  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
+  const loginPath = next ? `/login?next=${next}` : "/login";
+  const loginHref = baseUrl ? `${baseUrl}${loginPath}` : loginPath;
 
   return (
     <main className="min-h-screen bg-white text-gray-900">
@@ -220,7 +224,7 @@ export default async function MarketingHome({
         <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-gray-200 pt-6 text-xs text-gray-500 md:flex-row md:items-center">
           <div>© {new Date().getFullYear()} Convert My Email</div>
           <div className="flex gap-4">
-            <Link href="/login" className="hover:text-gray-700">
+            <Link href={loginHref} className="hover:text-gray-700">
               Login
             </Link>
             <a href="#" className="hover:text-gray-700">
