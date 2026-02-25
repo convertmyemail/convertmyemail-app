@@ -181,6 +181,7 @@ export default function UploadPage() {
             <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
               <div>
                 <div className="text-sm font-semibold">Dashboard</div>
+                <div className="text-[10px] text-gray-400">BUILD: pdf-button-v1</div>
                 <div className="text-xs text-gray-500">
                   Convert email files into clean records for storage or submission.
                 </div>
