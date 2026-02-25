@@ -13,7 +13,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("conversions")
-    .select("id, original_filename, created_at, csv_path")
+    .select("id, original_filename, created_at, csv_path, pdf_path")
     .order("created_at", { ascending: false })
     .limit(50);
 
