@@ -15,10 +15,7 @@ function safeFileName(name: string) {
 }
 
 function titleCaseHeader(key: string) {
-  // file_name -> File Name, body_text -> Body Text
-  return key
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 async function rowsToPdfBuffer(
@@ -131,7 +128,6 @@ async function rowsToXlsxBuffer(
   ws.columns = columns.map((key) => ({
     header: titleCaseHeader(key),
     key,
-    // initial widths; we’ll refine below
     width:
       key === "body_text"
         ? 70
@@ -144,18 +140,16 @@ async function rowsToXlsxBuffer(
               : 28,
   }));
 
-  // Header styling
   const headerRow = ws.getRow(1);
   headerRow.font = { bold: true };
   headerRow.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   headerRow.height = 22;
 
-  // Slightly nicer header fill/border (subtle “court-ready” feel)
   headerRow.eachCell((cell) => {
     cell.fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FFF2F2F2" }, // light gray
+      fgColor: { argb: "FFF2F2F2" },
     };
     cell.border = {
       top: { style: "thin", color: { argb: "FFBFBFBF" } },
@@ -165,7 +159,6 @@ async function rowsToXlsxBuffer(
     };
   });
 
-  // Data rows
   rows.forEach((r) => {
     ws.addRow({
       file_name: r.file_name || "",
@@ -177,42 +170,28 @@ async function rowsToXlsxBuffer(
     });
   });
 
-  // Body styling
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
 
     row.alignment = { vertical: "top", horizontal: "left", wrapText: true };
 
-    // borders for “spacing” and readability
-    row.eachCell((cell, colNumber) => {
+    row.eachCell((cell) => {
       cell.border = {
         top: { style: "thin", color: { argb: "FFE0E0E0" } },
         left: { style: "thin", color: { argb: "FFE0E0E0" } },
         bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
         right: { style: "thin", color: { argb: "FFE0E0E0" } },
       };
-
-      // Wrap + slight padding effect using indentation
-      cell.alignment = {
-        ...(cell.alignment ?? {}),
-        wrapText: true,
-        indent: colNumber === columns.indexOf("body_text") + 1 ? 0 : 0,
-      };
+      cell.alignment = { ...(cell.alignment ?? {}), wrapText: true };
     });
   });
 
-  // Improve row heights for body text
-  // Set a reasonable minimum; Excel will still allow manual expansion.
   for (let i = 2; i <= ws.rowCount; i++) {
     const row = ws.getRow(i);
     const body = String(row.getCell("body_text").value ?? "");
-    // crude estimate: more text -> taller
     const lines = Math.min(12, Math.max(1, Math.ceil(body.length / 90)));
     row.height = 18 + lines * 10;
   }
-
-  // Ensure date column is readable; keep as text for now (your date is ISO string)
-  // If you later want true Excel dates, we can parse and set numFmt.
 
   const xlsx = await wb.xlsx.writeBuffer();
   return Buffer.from(xlsx);
@@ -220,6 +199,10 @@ async function rowsToXlsxBuffer(
 
 export async function POST(req: Request) {
   try {
+    // Which output should we return to the browser?
+    const url = new URL(req.url);
+    const output = (url.searchParams.get("output") || "xlsx") as "xlsx" | "pdf";
+
     const cookieStore = await Promise.resolve(cookies() as any);
     const supabase = createSupabaseServerClient(cookieStore);
 
@@ -266,9 +249,7 @@ export async function POST(req: Request) {
       });
 
       if (up.error) {
-        return new NextResponse(`EML upload failed: ${up.error.message}`, {
-          status: 500,
-        });
+        return new NextResponse(`EML upload failed: ${up.error.message}`, { status: 500 });
       }
 
       uploadedEmlPaths.push(emlPath);
@@ -307,35 +288,32 @@ export async function POST(req: Request) {
       return new NextResponse("No valid .eml files found.", { status: 400 });
     }
 
-    // XLSX (ExcelJS)
-    const xlsxBytes = await rowsToXlsxBuffer(parsedRows);
-    const xlsxPath = `${userId}/${Date.now()}-converted-emails.xlsx`;
+    // Generate both outputs (so history always has both)
+    const [xlsxBytes, pdfBuffer] = await Promise.all([
+      rowsToXlsxBuffer(parsedRows),
+      rowsToPdfBuffer(parsedRows),
+    ]);
 
+    // Upload XLSX
+    const xlsxPath = `${userId}/${Date.now()}-converted-emails.xlsx`;
     const upXlsx = await supabase.storage.from("conversions").upload(xlsxPath, xlsxBytes, {
-      contentType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       upsert: false,
     });
 
     if (upXlsx.error) {
-      return new NextResponse(`XLSX upload failed: ${upXlsx.error.message}`, {
-        status: 500,
-      });
+      return new NextResponse(`XLSX upload failed: ${upXlsx.error.message}`, { status: 500 });
     }
 
-    // PDF (pdf-lib)
-    const pdfBuffer = await rowsToPdfBuffer(parsedRows);
+    // Upload PDF
     const pdfPath = `${userId}/${Date.now()}-email-records.pdf`;
-
     const upPdf = await supabase.storage.from("conversions").upload(pdfPath, pdfBuffer, {
       contentType: "application/pdf",
       upsert: false,
     });
 
     if (upPdf.error) {
-      return new NextResponse(`PDF upload failed: ${upPdf.error.message}`, {
-        status: 500,
-      });
+      return new NextResponse(`PDF upload failed: ${upPdf.error.message}`, { status: 500 });
     }
 
     // History row
@@ -351,10 +329,9 @@ export async function POST(req: Request) {
         eml_path: representativeEmlPath,
         xlsx_path: xlsxPath,
         pdf_path: pdfPath,
-        // keep csv_path for backward compatibility if your UI expects it
         csv_path: null,
       })
-      .select("id, created_at, original_filename, xlsx_path, pdf_path")
+      .select("id")
       .single();
 
     if (convErr || !conversion) {
@@ -363,16 +340,27 @@ export async function POST(req: Request) {
       });
     }
 
-    // Return XLSX download now (better UX)
-   return new NextResponse(new Uint8Array(xlsxBytes), {
-  status: 200,
-  headers: {
-    "Content-Type":
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
-    "X-Conversion-Id": conversion.id,
-  },
-});
+    // Return whichever output user requested
+    if (output === "pdf") {
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": 'attachment; filename="email-records.pdf"',
+          "X-Conversion-Id": conversion.id,
+        },
+      });
+    }
+
+    return new NextResponse(new Uint8Array(xlsxBytes), {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
+        "X-Conversion-Id": conversion.id,
+      },
+    });
   } catch (err: any) {
     return new NextResponse(err?.message || "Conversion failed.", { status: 500 });
   }

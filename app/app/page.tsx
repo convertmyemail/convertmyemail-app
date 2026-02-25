@@ -21,6 +21,9 @@ export default function UploadPage() {
   const [files, setFiles] = useState<FileList | null>(null);
   const [status, setStatus] = useState<string>("");
 
+  // Which format to return immediately after conversion
+  const [convertFormat, setConvertFormat] = useState<"xlsx" | "pdf">("xlsx");
+
   // History
   const [history, setHistory] = useState<Conversion[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(true);
@@ -85,13 +88,15 @@ export default function UploadPage() {
     loadHistory();
   }, []);
 
-  const upload = async () => {
+  const upload = async (formatOverride?: "xlsx" | "pdf") => {
+    const format = formatOverride ?? convertFormat;
+
     if (!files || files.length === 0) {
       setStatus("Please select one or more .eml files.");
       return;
     }
 
-    setStatus("Uploading and converting…");
+    setStatus(`Uploading and converting to ${format.toUpperCase()}…`);
 
     const {
       data: { session },
@@ -105,7 +110,7 @@ export default function UploadPage() {
     const formData = new FormData();
     Array.from(files).forEach((f) => formData.append("files", f));
 
-    const res = await fetch("/api/convert-eml", {
+    const res = await fetch(`/api/convert-eml?output=${format}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.access_token}`,
@@ -119,12 +124,12 @@ export default function UploadPage() {
       return;
     }
 
-    // Download XLSX (new behavior)
+    // Download the requested output immediately
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "converted-emails.xlsx";
+    a.download = format === "pdf" ? "email-records.pdf" : "converted-emails.xlsx";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -220,12 +225,27 @@ export default function UploadPage() {
                   </button>
 
                   <button
-                    className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                    onClick={upload}
+                    className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+                    onClick={() => {
+                      setConvertFormat("xlsx");
+                      upload("xlsx");
+                    }}
                     disabled={!files || files.length === 0}
                     type="button"
                   >
-                    Convert to Excel (XLSX)
+                    Convert to Excel
+                  </button>
+
+                  <button
+                    className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                    onClick={() => {
+                      setConvertFormat("pdf");
+                      upload("pdf");
+                    }}
+                    disabled={!files || files.length === 0}
+                    type="button"
+                  >
+                    Convert to PDF
                   </button>
                 </div>
               </div>
@@ -295,7 +315,6 @@ export default function UploadPage() {
                 </div>
               )}
 
-              {/* Note for your audience */}
               <p className="mt-4 text-xs text-gray-500">
                 Tip: This is designed for clean storage, audit trails, and review workflows.
               </p>
@@ -306,9 +325,7 @@ export default function UploadPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Conversion history</h2>
-                  <p className="mt-1 text-sm text-gray-600">
-                    Download previously generated files.
-                  </p>
+                  <p className="mt-1 text-sm text-gray-600">Download previously generated files.</p>
                 </div>
 
                 <button
