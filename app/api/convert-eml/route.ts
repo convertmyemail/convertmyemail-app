@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { simpleParser } from "mailparser";
-import * as Papa from "papaparse";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import ExcelJS from "exceljs";
 
 export const runtime = "nodejs";
 
@@ -12,6 +12,13 @@ function safeFileName(name: string) {
     .replace(/[^\w.\-()]+/g, "_")
     .replace(/_+/g, "_")
     .slice(0, 140);
+}
+
+function titleCaseHeader(key: string) {
+  // file_name -> File Name, body_text -> Body Text
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 async function rowsToPdfBuffer(
@@ -43,7 +50,6 @@ async function rowsToPdfBuffer(
   };
 
   const drawLine = (text: string, size = 10, color = rgb(0, 0, 0)) => {
-    // crude wrap to avoid text running off page
     const maxWidth = width - margin * 2;
     const words = (text || "").split(/\s+/);
     let line = "";
@@ -68,13 +74,11 @@ async function rowsToPdfBuffer(
     if (line) flush();
   };
 
-  // Header
   drawLine("Email Record Export", 16);
   y -= 6;
   drawLine(`Generated: ${new Date().toISOString()}`, 10, rgb(0.33, 0.33, 0.33));
   y -= 12;
 
-  // Records
   rows.forEach((r, idx) => {
     drawLine(`Record ${idx + 1}`, 12);
     y -= 2;
@@ -94,6 +98,124 @@ async function rowsToPdfBuffer(
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
+}
+
+async function rowsToXlsxBuffer(
+  rows: Array<{
+    file_name: string;
+    from: string;
+    to: string;
+    subject: string;
+    date: string;
+    body_text: string;
+  }>
+): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "ConvertMyEmail";
+  wb.created = new Date();
+
+  const ws = wb.addWorksheet("Emails", {
+    views: [{ state: "frozen", ySplit: 1 }],
+    properties: { defaultRowHeight: 18 },
+  });
+
+  const columns: Array<keyof (typeof rows)[number]> = [
+    "file_name",
+    "from",
+    "to",
+    "subject",
+    "date",
+    "body_text",
+  ];
+
+  ws.columns = columns.map((key) => ({
+    header: titleCaseHeader(key),
+    key,
+    // initial widths; we’ll refine below
+    width:
+      key === "body_text"
+        ? 70
+        : key === "subject"
+          ? 40
+          : key === "from" || key === "to"
+            ? 32
+            : key === "date"
+              ? 24
+              : 28,
+  }));
+
+  // Header styling
+  const headerRow = ws.getRow(1);
+  headerRow.font = { bold: true };
+  headerRow.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+  headerRow.height = 22;
+
+  // Slightly nicer header fill/border (subtle “court-ready” feel)
+  headerRow.eachCell((cell) => {
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFF2F2F2" }, // light gray
+    };
+    cell.border = {
+      top: { style: "thin", color: { argb: "FFBFBFBF" } },
+      left: { style: "thin", color: { argb: "FFBFBFBF" } },
+      bottom: { style: "thin", color: { argb: "FFBFBFBF" } },
+      right: { style: "thin", color: { argb: "FFBFBFBF" } },
+    };
+  });
+
+  // Data rows
+  rows.forEach((r) => {
+    ws.addRow({
+      file_name: r.file_name || "",
+      from: r.from || "",
+      to: r.to || "",
+      subject: r.subject || "",
+      date: r.date || "",
+      body_text: r.body_text || "",
+    });
+  });
+
+  // Body styling
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+
+    row.alignment = { vertical: "top", horizontal: "left", wrapText: true };
+
+    // borders for “spacing” and readability
+    row.eachCell((cell, colNumber) => {
+      cell.border = {
+        top: { style: "thin", color: { argb: "FFE0E0E0" } },
+        left: { style: "thin", color: { argb: "FFE0E0E0" } },
+        bottom: { style: "thin", color: { argb: "FFE0E0E0" } },
+        right: { style: "thin", color: { argb: "FFE0E0E0" } },
+      };
+
+      // Wrap + slight padding effect using indentation
+      cell.alignment = {
+        ...(cell.alignment ?? {}),
+        wrapText: true,
+        indent: colNumber === columns.indexOf("body_text") + 1 ? 0 : 0,
+      };
+    });
+  });
+
+  // Improve row heights for body text
+  // Set a reasonable minimum; Excel will still allow manual expansion.
+  for (let i = 2; i <= ws.rowCount; i++) {
+    const row = ws.getRow(i);
+    const body = String(row.getCell("body_text").value ?? "");
+    // crude estimate: more text -> taller
+    const lines = Math.min(12, Math.max(1, Math.ceil(body.length / 90)));
+    row.height = 18 + lines * 10;
+  }
+
+  // Ensure date column is readable; keep as text for now (your date is ISO string)
+  // If you later want true Excel dates, we can parse and set numFmt.
+
+  const xlsx = await wb.xlsx.writeBuffer();
+  return Buffer.from(xlsx);
 }
 
 export async function POST(req: Request) {
@@ -185,18 +307,18 @@ export async function POST(req: Request) {
       return new NextResponse("No valid .eml files found.", { status: 400 });
     }
 
-    // CSV
-    const csv = Papa.unparse(parsedRows);
-    const csvBytes = Buffer.from(csv, "utf8");
-    const csvPath = `${userId}/${Date.now()}-converted-emails.csv`;
+    // XLSX (ExcelJS)
+    const xlsxBytes = await rowsToXlsxBuffer(parsedRows);
+    const xlsxPath = `${userId}/${Date.now()}-converted-emails.xlsx`;
 
-    const upCsv = await supabase.storage.from("conversions").upload(csvPath, csvBytes, {
-      contentType: "text/csv",
+    const upXlsx = await supabase.storage.from("conversions").upload(xlsxPath, xlsxBytes, {
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       upsert: false,
     });
 
-    if (upCsv.error) {
-      return new NextResponse(`CSV upload failed: ${upCsv.error.message}`, {
+    if (upXlsx.error) {
+      return new NextResponse(`XLSX upload failed: ${upXlsx.error.message}`, {
         status: 500,
       });
     }
@@ -227,10 +349,12 @@ export async function POST(req: Request) {
         user_id: userId,
         original_filename: displayName,
         eml_path: representativeEmlPath,
-        csv_path: csvPath,
+        xlsx_path: xlsxPath,
         pdf_path: pdfPath,
+        // keep csv_path for backward compatibility if your UI expects it
+        csv_path: null,
       })
-      .select("id, created_at, original_filename, csv_path, pdf_path")
+      .select("id, created_at, original_filename, xlsx_path, pdf_path")
       .single();
 
     if (convErr || !conversion) {
@@ -239,15 +363,16 @@ export async function POST(req: Request) {
       });
     }
 
-    // Keep existing UX: still returns CSV download
-    return new NextResponse(csv, {
-      status: 200,
-      headers: {
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="converted-emails.csv"',
-        "X-Conversion-Id": conversion.id,
-      },
-    });
+    // Return XLSX download now (better UX)
+   return new NextResponse(new Uint8Array(xlsxBytes), {
+  status: 200,
+  headers: {
+    "Content-Type":
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
+    "X-Conversion-Id": conversion.id,
+  },
+});
   } catch (err: any) {
     return new NextResponse(err?.message || "Conversion failed.", { status: 500 });
   }

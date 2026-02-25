@@ -8,8 +8,10 @@ type Conversion = {
   id: string;
   original_filename: string | null;
   created_at: string;
+  xlsx_path: string | null;
   csv_path: string | null;
   pdf_path: string | null;
+  sheet_path: string | null; // preferred xlsx, fallback csv
 };
 
 export default function UploadPage() {
@@ -50,7 +52,11 @@ export default function UploadPage() {
     }
   };
 
-  const downloadPath = async (id: string, path: string, label: "csv" | "pdf") => {
+  const downloadPath = async (
+    id: string,
+    path: string,
+    label: "xlsx" | "csv" | "pdf"
+  ) => {
     if (!path) return;
 
     const key = `${id}:${label}`;
@@ -113,12 +119,12 @@ export default function UploadPage() {
       return;
     }
 
-    // Download CSV (keep existing behavior)
+    // Download XLSX (new behavior)
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "converted-emails.csv";
+    a.download = "converted-emails.xlsx";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -150,7 +156,7 @@ export default function UploadPage() {
           <div className="mt-auto p-3">
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
               <div className="text-xs font-medium text-gray-700">Output formats</div>
-              <div className="mt-1 text-xs text-gray-600">Excel (.csv) • PDF</div>
+              <div className="mt-1 text-xs text-gray-600">Excel (.xlsx) • PDF</div>
             </div>
 
             <button
@@ -219,7 +225,7 @@ export default function UploadPage() {
                     disabled={!files || files.length === 0}
                     type="button"
                   >
-                    Convert to Excel (CSV)
+                    Convert to Excel (XLSX)
                   </button>
                 </div>
               </div>
@@ -315,9 +321,7 @@ export default function UploadPage() {
                 </button>
               </div>
 
-              {historyError && (
-                <p className="mt-4 text-sm text-red-600">{historyError}</p>
-              )}
+              {historyError && <p className="mt-4 text-sm text-red-600">{historyError}</p>}
 
               {historyLoading ? (
                 <p className="mt-4 text-sm text-gray-600">Loading…</p>
@@ -341,8 +345,10 @@ export default function UploadPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {history.map((c) => {
-                        const csvKey = `${c.id}:csv`;
+                        const sheetKey = `${c.id}:sheet`;
                         const pdfKey = `${c.id}:pdf`;
+
+                        const sheetLabel: "xlsx" | "csv" = c.xlsx_path ? "xlsx" : "csv";
 
                         return (
                           <tr key={c.id} className="align-middle">
@@ -350,9 +356,7 @@ export default function UploadPage() {
                               <div className="text-sm text-gray-900">
                                 {c.original_filename || "(unnamed)"}
                               </div>
-                              <div className="text-xs text-gray-500">
-                                ID: {c.id.slice(0, 8)}
-                              </div>
+                              <div className="text-xs text-gray-500">ID: {c.id.slice(0, 8)}</div>
                             </td>
 
                             <td className="py-3 pr-3 text-gray-600">
@@ -361,7 +365,12 @@ export default function UploadPage() {
 
                             <td className="py-3 pr-3">
                               <div className="flex flex-wrap gap-2">
-                                {c.csv_path && (
+                                {c.xlsx_path && (
+                                  <span className="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                                    XLSX
+                                  </span>
+                                )}
+                                {!c.xlsx_path && c.csv_path && (
                                   <span className="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
                                     CSV
                                   </span>
@@ -379,19 +388,17 @@ export default function UploadPage() {
                                 <button
                                   className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-50"
                                   onClick={() =>
-                                    c.csv_path && downloadPath(c.id, c.csv_path, "csv")
+                                    c.sheet_path && downloadPath(c.id, c.sheet_path, sheetLabel)
                                   }
-                                  disabled={!c.csv_path || downloadingKey === csvKey}
+                                  disabled={!c.sheet_path || downloadingKey === sheetKey}
                                   type="button"
                                 >
-                                  {downloadingKey === csvKey ? "Preparing…" : "CSV"}
+                                  {downloadingKey === sheetKey ? "Preparing…" : "Excel"}
                                 </button>
 
                                 <button
                                   className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                                  onClick={() =>
-                                    c.pdf_path && downloadPath(c.id, c.pdf_path, "pdf")
-                                  }
+                                  onClick={() => c.pdf_path && downloadPath(c.id, c.pdf_path, "pdf")}
                                   disabled={!c.pdf_path || downloadingKey === pdfKey}
                                   type="button"
                                 >
@@ -406,7 +413,7 @@ export default function UploadPage() {
                   </table>
 
                   <p className="mt-4 text-xs text-gray-500">
-                    PDFs are generated during conversion and stored alongside CSV exports.
+                    PDFs are generated during conversion and stored alongside Excel exports.
                   </p>
                 </div>
               )}

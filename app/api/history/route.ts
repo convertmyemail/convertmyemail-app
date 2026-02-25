@@ -11,13 +11,30 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const userId = userData.user.id;
+
   const { data, error } = await supabase
     .from("conversions")
-    .select("id, original_filename, created_at, csv_path, pdf_path")
+    .select("id, user_id, original_filename, created_at, xlsx_path, csv_path, pdf_path")
+    .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(50);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ conversions: data ?? [] });
+  const conversions =
+    (data ?? []).map((c) => ({
+      id: c.id,
+      original_filename: c.original_filename,
+      created_at: c.created_at,
+      // new
+      xlsx_path: c.xlsx_path ?? null,
+      // legacy
+      csv_path: c.csv_path ?? null,
+      pdf_path: c.pdf_path ?? null,
+      // convenience: prefer xlsx, fallback to csv
+      sheet_path: c.xlsx_path ?? c.csv_path ?? null,
+    })) ?? [];
+
+  return NextResponse.json({ conversions });
 }
