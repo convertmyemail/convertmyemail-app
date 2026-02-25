@@ -30,38 +30,113 @@ async function rowsToPdfBuffer(
 ): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
   const margin = 50;
   const lineGap = 6;
-  const page = () => pdfDoc.addPage();
-  let p = page();
-  let { width, height } = p.getSize();
-  let y = height - margin;
 
-  const newPageIfNeeded = (needed: number) => {
-    if (y - needed < margin) {
-      p = page();
-      ({ width, height } = p.getSize());
-      y = height - margin;
-    }
+  const titleSize = 14;
+  const labelSize = 10;
+  const bodySize = 10;
+
+  const generated = new Date().toISOString();
+
+  const makePage = () => pdfDoc.addPage();
+  let p = makePage();
+  let { width, height } = p.getSize();
+
+  const headerTop = height - margin + 12;
+  const footerBottom = margin - 22;
+  const contentTop = height - margin - 30;
+  const contentBottom = margin + 18;
+
+  let y = contentTop;
+
+  const drawHeader = () => {
+    p.drawText("Email Record Export", {
+      x: margin,
+      y: headerTop,
+      size: titleSize,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+
+    p.drawText(`Generated: ${generated}`, {
+      x: margin,
+      y: headerTop - 16,
+      size: 9,
+      font,
+      color: rgb(0.35, 0.35, 0.35),
+    });
+
+    p.drawLine({
+      start: { x: margin, y: headerTop - 24 },
+      end: { x: width - margin, y: headerTop - 24 },
+      thickness: 1,
+      color: rgb(0.85, 0.85, 0.85),
+    });
   };
 
-  const drawLine = (text: string, size = 10, color = rgb(0, 0, 0)) => {
-    const maxWidth = width - margin * 2;
-    const words = (text || "").split(/\s+/);
-    let line = "";
+  const drawFooter = (pageNumber: number, totalPages: number) => {
+    const text = `Page ${pageNumber} of ${totalPages}`;
 
+    p.drawLine({
+      start: { x: margin, y: footerBottom + 14 },
+      end: { x: width - margin, y: footerBottom + 14 },
+      thickness: 1,
+      color: rgb(0.9, 0.9, 0.9),
+    });
+
+    p.drawText(text, {
+      x: width - margin - font.widthOfTextAtSize(text, 9),
+      y: footerBottom,
+      size: 9,
+      font,
+      color: rgb(0.35, 0.35, 0.35),
+    });
+  };
+
+  const newPage = () => {
+    p = makePage();
+    ({ width, height } = p.getSize());
+    y = height - margin - 30;
+    drawHeader();
+  };
+
+  const ensureSpace = (needed: number) => {
+    if (y - needed < contentBottom) newPage();
+  };
+
+  const wrapAndDraw = (
+    text: string,
+    opts: { size?: number; useBold?: boolean; color?: any; indent?: number } = {}
+  ) => {
+    const size = opts.size ?? bodySize;
+    const f = opts.useBold ? fontBold : font;
+    const color = opts.color ?? rgb(0, 0, 0);
+    const indent = opts.indent ?? 0;
+
+    const maxWidth = width - margin * 2 - indent;
+    const words = (text || "").split(/\s+/).filter(Boolean);
+
+    if (words.length === 0) {
+      ensureSpace(size + lineGap);
+      y -= size + lineGap;
+      return;
+    }
+
+    let line = "";
     const flush = () => {
-      newPageIfNeeded(size + lineGap);
-      p.drawText(line, { x: margin, y, size, font, color });
+      ensureSpace(size + lineGap);
+      p.drawText(line, { x: margin + indent, y, size, font: f, color });
       y -= size + lineGap;
       line = "";
     };
 
     for (const w of words) {
       const test = line ? `${line} ${w}` : w;
-      const testWidth = font.widthOfTextAtSize(test, size);
-      if (testWidth > maxWidth && line) {
+      const wWidth = f.widthOfTextAtSize(test, size);
+      if (wWidth > maxWidth && line) {
         flush();
         line = w;
       } else {
@@ -71,26 +146,55 @@ async function rowsToPdfBuffer(
     if (line) flush();
   };
 
-  drawLine("Email Record Export", 16);
-  y -= 6;
-  drawLine(`Generated: ${new Date().toISOString()}`, 10, rgb(0.33, 0.33, 0.33));
-  y -= 12;
+  // Start first page
+  drawHeader();
 
   rows.forEach((r, idx) => {
-    drawLine(`Record ${idx + 1}`, 12);
-    y -= 2;
+    ensureSpace(70);
 
-    drawLine(`File: ${r.file_name || ""}`, 10);
-    drawLine(`From: ${r.from || ""}`, 10);
-    drawLine(`To: ${r.to || ""}`, 10);
-    drawLine(`Date: ${r.date || ""}`, 10);
-    drawLine(`Subject: ${r.subject || ""}`, 10);
+    wrapAndDraw(`Record ${idx + 1}`, { size: 12, useBold: true });
+    wrapAndDraw(`Record ID: ${String(idx + 1).padStart(4, "0")}`, {
+      size: 9,
+      color: rgb(0.35, 0.35, 0.35),
+    });
+    y -= 4;
+
+    const field = (label: string, value: string) => {
+      wrapAndDraw(`${label}:`, { size: labelSize, useBold: true });
+      wrapAndDraw(value || "", { size: bodySize, indent: 14 });
+      y -= 2;
+    };
+
+    field("File", r.file_name || "");
+    field("From", r.from || "");
+    field("To", r.to || "");
+    field("Date", r.date || "");
+    field("Subject", r.subject || "");
 
     y -= 6;
-    drawLine("Body:", 10, rgb(0.2, 0.2, 0.2));
-    drawLine(r.body_text || "", 10);
 
+    wrapAndDraw("Body:", { size: labelSize, useBold: true });
+    wrapAndDraw(r.body_text || "", { size: bodySize, indent: 14 });
+
+    y -= 10;
+
+    ensureSpace(12);
+    p.drawLine({
+      start: { x: margin, y },
+      end: { x: width - margin, y },
+      thickness: 1,
+      color: rgb(0.9, 0.9, 0.9),
+    });
     y -= 14;
+  });
+
+  // Add footers with correct total page count
+  const pages = pdfDoc.getPages();
+  const totalPages = pages.length;
+  pages.forEach((page, i) => {
+    p = page;
+    ({ width, height } = p.getSize());
+    drawFooter(i + 1, totalPages);
   });
 
   const bytes = await pdfDoc.save();
@@ -355,8 +459,7 @@ export async function POST(req: Request) {
     return new NextResponse(new Uint8Array(xlsxBytes), {
       status: 200,
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
         "X-Conversion-Id": conversion.id,
       },
