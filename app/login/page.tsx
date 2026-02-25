@@ -1,23 +1,40 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
+
+function safeNextPath(nextRaw: string | null) {
+  if (!nextRaw) return "/app";
+  if (!nextRaw.startsWith("/")) return "/app";
+  if (nextRaw.startsWith("//")) return "/app";
+  return nextRaw;
+}
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const nextPath = useMemo(() => {
-    const n = searchParams?.get("next");
-    // keep it simple + safe: only allow relative next
-    if (!n || !n.startsWith("/")) return "/app";
-    return n;
-  }, [searchParams]);
 
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [nextPath, setNextPath] = useState("/app");
+
+  // Read ?next= from the URL on the client (avoids build/prerender issues)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const n = params.get("next");
+      setNextPath(safeNextPath(n));
+
+      const err = params.get("error");
+      const reason = params.get("reason");
+      if (err) {
+        setStatus(reason ? `Login error: ${reason}` : `Login error: ${err}`);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // If already logged in, bounce to app
   useEffect(() => {
@@ -60,7 +77,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-white text-gray-900">
-      {/* Top bar (matches your app vibe) */}
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div>
@@ -72,7 +88,6 @@ export default function LoginPage() {
       </header>
 
       <main className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-10 md:flex-row md:items-start">
-        {/* Left “brand” panel */}
         <section className="w-full md:w-1/2">
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
             <h1 className="text-lg font-semibold">Sign in</h1>
@@ -100,32 +115,25 @@ export default function LoginPage() {
               </div>
 
               <p className="text-xs text-gray-500">
-                Tip: Use the same email each time — we’ll keep your history under one account.
+                Redirect after login: <span className="font-medium text-gray-700">{nextPath}</span>
               </p>
             </div>
           </div>
         </section>
 
-        {/* Right sign-in card */}
         <section className="w-full md:w-1/2">
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-sm font-semibold">Magic link</div>
-                <div className="mt-1 text-xs text-gray-500">
-                  We’ll email you a secure sign-in link.
-                </div>
-              </div>
-
-              <div className="hidden rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 md:block">
-                Redirect after login: <span className="font-medium text-gray-700">{nextPath}</span>
+            <div>
+              <div className="text-sm font-semibold">Magic link</div>
+              <div className="mt-1 text-xs text-gray-500">
+                We’ll email you a secure sign-in link.
               </div>
             </div>
 
             <div className="mt-5">
               <label className="text-xs font-medium text-gray-700">Email</label>
               <input
-                className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none ring-0 placeholder:text-gray-400 focus:border-gray-900"
+                className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-gray-400 focus:border-gray-900"
                 placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -153,7 +161,7 @@ export default function LoginPage() {
               <div className="text-xs font-medium text-gray-700">Trouble?</div>
               <p className="mt-1 text-xs text-gray-600">
                 If you don’t see the email, check spam/junk and try again. Some providers delay
-                delivery by a minute or two.
+                delivery briefly.
               </p>
             </div>
           </div>
