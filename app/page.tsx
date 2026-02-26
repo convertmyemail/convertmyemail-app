@@ -1,4 +1,7 @@
 // app/page.tsx
+import HowToSaveEml from "@/app/components/HowToSaveEml";
+import PricingSection from "@/app/components/PricingSection";
+import MobileMenu from "@/app/components/MobileMenu";
 import Link from "next/link";
 
 type SP = { next?: string };
@@ -10,32 +13,29 @@ export default async function MarketingHome({
 }) {
   const sp = (await Promise.resolve(searchParams)) || {};
   const next = sp?.next ? encodeURIComponent(sp.next) : "";
-
-  // ✅ Force login links to your canonical domain if configured
-  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
-  const loginPath = next ? `/login?next=${next}` : "/login";
-  const loginHref = baseUrl ? `${baseUrl}${loginPath}` : loginPath;
+  const loginHref = next ? `/login?next=${next}` : "/login";
 
   return (
     <main className="min-h-screen bg-white text-gray-900">
       {/* Top bar */}
-      <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/80 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <Link href="/" className="font-semibold tracking-tight">
             Convert My Email
           </Link>
 
-          <nav className="flex items-center gap-3">
-            <Link
-              href="#how"
-              className="hidden text-sm text-gray-600 hover:text-gray-900 md:block"
-            >
+          {/* Desktop nav */}
+          <nav className="hidden items-center gap-3 md:flex">
+            <Link href="#how" className="text-sm text-gray-600 hover:text-gray-900">
               How it works
             </Link>
-            <Link
-              href="#who"
-              className="hidden text-sm text-gray-600 hover:text-gray-900 md:block"
-            >
+            <Link href="#how-to-eml" className="text-sm text-gray-600 hover:text-gray-900">
+              Save .eml
+            </Link>
+            <Link href="#pricing" className="text-sm text-gray-600 hover:text-gray-900">
+              Pricing
+            </Link>
+            <Link href="#who" className="text-sm text-gray-600 hover:text-gray-900">
               Who it’s for
             </Link>
 
@@ -46,6 +46,9 @@ export default async function MarketingHome({
               Sign in
             </Link>
           </nav>
+
+          {/* Mobile nav */}
+          <MobileMenu loginHref={loginHref} />
         </div>
       </header>
 
@@ -179,6 +182,11 @@ export default async function MarketingHome({
         </div>
       </section>
 
+      {/* How to save .eml */}
+      <div id="how-to-eml">
+        <HowToSaveEml />
+      </div>
+
       {/* Who it's for */}
       <section className="mx-auto max-w-6xl px-6 pb-14" id="who">
         <div className="rounded-2xl border border-gray-200 bg-white p-8">
@@ -195,6 +203,9 @@ export default async function MarketingHome({
           </div>
         </div>
       </section>
+
+      {/* Pricing */}
+      <PricingSection loginHref={loginHref} />
 
       {/* CTA */}
       <section className="mx-auto max-w-6xl px-6 pb-20">
@@ -224,7 +235,7 @@ export default async function MarketingHome({
         <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-gray-200 pt-6 text-xs text-gray-500 md:flex-row md:items-center">
           <div>© {new Date().getFullYear()} Convert My Email</div>
           <div className="flex gap-4">
-            <Link href={loginHref} className="hover:text-gray-700">
+            <Link href="/login" className="hover:text-gray-700">
               Login
             </Link>
             <a href="#" className="hover:text-gray-700">
