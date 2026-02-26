@@ -339,9 +339,10 @@ async function rowsToXlsxBuffer(
   wb.creator = "ConvertMyEmail";
   wb.created = new Date();
 
+  // Primary sheet
   const ws = wb.addWorksheet("Emails", {
     views: [{ state: "frozen", ySplit: 1 }],
-    properties: { defaultRowHeight: 18 },
+    properties: { defaultRowHeight: 20 },
   });
 
   const columns: Array<keyof (typeof rows)[number]> = [
@@ -358,35 +359,37 @@ async function rowsToXlsxBuffer(
     key,
     width:
       key === "body_text"
-        ? 70
+        ? 80
         : key === "subject"
-          ? 40
+          ? 45
           : key === "from" || key === "to"
-            ? 32
+            ? 34
             : key === "date"
               ? 24
               : 28,
   }));
 
+  // Header styling
   const headerRow = ws.getRow(1);
-  headerRow.font = { bold: true };
+  headerRow.font = { bold: true, size: 12 };
   headerRow.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-  headerRow.height = 22;
+  headerRow.height = 24;
 
   headerRow.eachCell((cell) => {
     cell.fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FFF2F2F2" },
+      fgColor: { argb: "FFEFEFEF" },
     };
     cell.border = {
-      top: { style: "thin", color: { argb: "FFBFBFBF" } },
-      left: { style: "thin", color: { argb: "FFBFBFBF" } },
-      bottom: { style: "thin", color: { argb: "FFBFBFBF" } },
-      right: { style: "thin", color: { argb: "FFBFBFBF" } },
+      top: { style: "thin", color: { argb: "FFCCCCCC" } },
+      left: { style: "thin", color: { argb: "FFCCCCCC" } },
+      bottom: { style: "thin", color: { argb: "FFCCCCCC" } },
+      right: { style: "thin", color: { argb: "FFCCCCCC" } },
     };
   });
 
+  // Add rows
   rows.forEach((r) => {
     ws.addRow({
       file_name: r.file_name || "",
@@ -398,10 +401,28 @@ async function rowsToXlsxBuffer(
     });
   });
 
+  // Enable auto-filter (A-F)
+  ws.autoFilter = {
+    from: "A1",
+    to: `F${ws.rowCount}`,
+  };
+
+  // Body styling + zebra striping + borders
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
 
     row.alignment = { vertical: "top", horizontal: "left", wrapText: true };
+
+    // Zebra striping
+    if (rowNumber % 2 === 0) {
+      row.eachCell((cell) => {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF9F9F9" },
+        };
+      });
+    }
 
     row.eachCell((cell) => {
       cell.border = {
@@ -414,12 +435,26 @@ async function rowsToXlsxBuffer(
     });
   });
 
+  // Dynamic row height based on body text length
   for (let i = 2; i <= ws.rowCount; i++) {
     const row = ws.getRow(i);
     const body = String(row.getCell("body_text").value ?? "");
-    const lines = Math.min(12, Math.max(1, Math.ceil(body.length / 90)));
-    row.height = 18 + lines * 10;
+    const lines = Math.min(15, Math.max(1, Math.ceil(body.length / 95)));
+    row.height = 20 + lines * 10;
   }
+
+  // Summary sheet (professional touch)
+  const summary = wb.addWorksheet("Summary");
+  summary.getCell("A1").value = "ConvertMyEmail Export Summary";
+  summary.getCell("A1").font = { bold: true, size: 14 };
+
+  summary.getCell("A3").value = "Total Emails:";
+  summary.getCell("B3").value = rows.length;
+
+  summary.getCell("A4").value = "Generated:";
+  summary.getCell("B4").value = new Date().toISOString();
+
+  summary.columns = [{ width: 22 }, { width: 40 }];
 
   const xlsx = await wb.xlsx.writeBuffer();
   return Buffer.from(xlsx);
@@ -586,8 +621,7 @@ export async function POST(req: Request) {
     return new NextResponse(new Uint8Array(xlsxBytes), {
       status: 200,
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
         "Cache-Control": "no-store",
         Pragma: "no-cache",
