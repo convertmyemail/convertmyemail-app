@@ -2,81 +2,115 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
-type DownloadFormat = "xlsx" | "csv" | "pdf";
+export const runtime = "nodejs";
 
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => null);
+type Kind = "pdf" | "xlsx" | "csv" | "sheet";
+
+function contentTypeFor(ext: string) {
+  switch (ext) {
+    case "pdf":
+      return "application/pdf";
+    case "xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case "csv":
+      return "text/csv; charset=utf-8";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function safeDownloadName(name: string) {
+  return (name || "download")
+    .replace(/[^\w.-]+/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 140);
+}
+
+function parseKind(raw: string | null): Kind | null {
+  const k = (raw || "").toLowerCase();
+  if (k === "pdf" || k === "xlsx" || k === "csv" || k === "sheet") return k;
+  return null;
+}
+
+function contentDisposition(filename: string) {
+  // filename= is widely supported; filename*=UTF-8'' handles spaces/utf-8 properly.
+  const fallback = filename.replace(/"/g, ""); // keep it simple + safe for quoted string
+  const encoded = encodeURIComponent(filename);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+
+  const conversionId = url.searchParams.get("id");
+  const kind = parseKind(url.searchParams.get("kind"));
+
+  if (!conversionId || !kind) {
+    return NextResponse.json({ error: "Missing or invalid id/kind" }, { status: 400 });
+  }
 
   const cookieStore = await Promise.resolve(cookies() as any);
   const supabase = createSupabaseServerClient(cookieStore);
 
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData?.user) {
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+
+  if (userErr || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const userId = userData.user.id;
-
-  // Backward compatible: old client sends { path }
-  const directPath = body?.path as string | undefined;
-
-  // New preferred: client sends { conversionId, format }
-  const conversionId = body?.conversionId as string | undefined;
-  const format = (body?.format as DownloadFormat | undefined) ?? "xlsx";
-
-  let pathToSign: string | undefined = directPath;
-
-  if (!pathToSign && conversionId) {
-    const { data: conv, error: convErr } = await supabase
-      .from("conversions")
-      .select("id, user_id, xlsx_path, csv_path, pdf_path")
-      .eq("id", conversionId)
-      .single();
-
-    if (convErr || !conv) {
-      return NextResponse.json({ error: "Conversion not found" }, { status: 404 });
-    }
-
-    if (conv.user_id !== userId) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // Prefer XLSX, fallback to CSV if older conversion
-    if (format === "xlsx") pathToSign = conv.xlsx_path ?? conv.csv_path ?? undefined;
-    if (format === "csv") pathToSign = conv.csv_path ?? undefined;
-    if (format === "pdf") pathToSign = conv.pdf_path ?? undefined;
-  }
-
-  if (!pathToSign) {
-    return NextResponse.json({ error: "Missing path" }, { status: 400 });
-  }
-
-  // Safety: if client uses legacy {path}, ensure it’s within this user’s folder
-  // and only known file types.
-  const isAllowedExt =
-    pathToSign.endsWith(".xlsx") || pathToSign.endsWith(".csv") || pathToSign.endsWith(".pdf");
-
-  const isInUserFolder = pathToSign.startsWith(`${userId}/`);
-
-  if (!conversionId) {
-    if (!isAllowedExt) {
-      return NextResponse.json({ error: "Invalid file type" }, { status: 400 });
-    }
-    if (!isInUserFolder) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-  }
-
-  const { data, error } = await supabase.storage
+  // Ensure conversion belongs to user
+  const { data: row, error: rowErr } = await supabase
     .from("conversions")
-    .createSignedUrl(pathToSign, 60);
+    .select("id, user_id, original_filename, pdf_path, xlsx_path, csv_path")
+    .eq("id", conversionId)
+    .eq("user_id", user.id)
+    .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (rowErr || !row) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
-  return NextResponse.json({
-    url: data.signedUrl,
-    path: pathToSign,
-    format:
-      pathToSign.endsWith(".pdf") ? "pdf" : pathToSign.endsWith(".csv") ? "csv" : "xlsx",
+  const path =
+    kind === "pdf"
+      ? row.pdf_path
+      : kind === "xlsx"
+        ? row.xlsx_path
+        : kind === "csv"
+          ? row.csv_path
+          : kind === "sheet"
+            ? row.xlsx_path || row.csv_path
+            : null;
+
+  if (!path) {
+    return NextResponse.json({ error: "File not available" }, { status: 404 });
+  }
+
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from("conversions")
+    .download(path);
+
+  if (dlErr || !blob) {
+    return NextResponse.json({ error: "Download failed" }, { status: 500 });
+  }
+
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+
+  const extFromPath = (path.split(".").pop() || "").toLowerCase();
+  const ext = kind === "sheet" ? (extFromPath === "csv" ? "csv" : "xlsx") : kind;
+
+  const originalBase = safeDownloadName(row.original_filename || "conversion");
+  const filename = `${originalBase}.${ext}`;
+
+  return new NextResponse(bytes, {
+    status: 200,
+    headers: {
+      "Content-Type": contentTypeFor(ext),
+      "Content-Disposition": contentDisposition(filename),
+      "Cache-Control": "no-store",
+    },
   });
 }

@@ -52,58 +52,70 @@ export default function UploadPage() {
     }
   };
 
-  // ✅ Download without leaving the site (PDF downloads too)
-  const downloadPath = async (
-    id: string,
-    path: string,
-    label: "xlsx" | "csv" | "pdf"
-  ) => {
-    if (!path) return;
+  function getFilenameFromContentDisposition(disposition: string | null) {
+    if (!disposition) return null;
 
-    const key = `${id}:${label}`;
+    // Try RFC 5987: filename*=UTF-8''...
+    const star = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    if (star?.[1]) {
+      try {
+        return decodeURIComponent(star[1].trim());
+      } catch {
+        return star[1].trim();
+      }
+    }
+
+    // Fallback: filename="..."
+    const normal = disposition.match(/filename\s*=\s*"([^"]+)"/i);
+    if (normal?.[1]) return normal[1];
+
+    // Fallback: filename=...
+    const bare = disposition.match(/filename\s*=\s*([^;]+)/i);
+    if (bare?.[1]) return bare[1].trim().replace(/^"|"$/g, "");
+
+    return null;
+  }
+
+  // ✅ Download without leaving the site (same-origin blob)
+  // Server route: /api/download?id=<conversionId>&kind=pdf|sheet
+  const downloadConversionFile = async (id: string, kind: "pdf" | "sheet") => {
+    const key = `${id}:${kind}`;
     setDownloadingKey(key);
     setHistoryError("");
 
     try {
-      const res = await fetch("/api/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Failed to create download link");
-
-      const signedUrl = json.url as string;
-      if (!signedUrl) throw new Error("Missing signed URL");
-
-      // Fetch the file so we can trigger a download (no navigation)
-      const fileRes = await fetch(signedUrl);
-      if (!fileRes.ok) throw new Error("Failed to download file");
-
-      const blob = await fileRes.blob();
-
-      const objectUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-
-      // Try to use the storage filename; fallback to something friendly
-      const baseName = decodeURIComponent(
-        (path.split("/").pop() || "").split("?")[0] || ""
+      const res = await fetch(
+        `/api/download?id=${encodeURIComponent(id)}&kind=${encodeURIComponent(kind)}`,
+        { method: "GET" }
       );
 
-      const fallbackName =
-        label === "pdf"
-          ? "email-records.pdf"
-          : label === "xlsx"
-            ? "converted-emails.xlsx"
-            : "converted-emails.csv";
+      if (!res.ok) {
+        let msg = "Download failed";
+        try {
+          const j = await res.json();
+          msg = j?.error || msg;
+        } catch {}
+        throw new Error(msg);
+      }
 
-      a.download = baseName || fallbackName;
+      const disposition = res.headers.get("content-disposition");
+      const headerName = getFilenameFromContentDisposition(disposition);
+
+      const filename =
+        headerName ||
+        (kind === "pdf" ? "email-records.pdf" : "converted-emails.xlsx");
+
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = filename;
 
       document.body.appendChild(a);
       a.click();
       a.remove();
+
       window.URL.revokeObjectURL(objectUrl);
     } catch (e: any) {
       setHistoryError(e?.message || "Download failed");
@@ -387,8 +399,6 @@ export default function UploadPage() {
                         const sheetKey = `${c.id}:sheet`;
                         const pdfKey = `${c.id}:pdf`;
 
-                        const sheetLabel: "xlsx" | "csv" = c.xlsx_path ? "xlsx" : "csv";
-
                         return (
                           <tr key={c.id} className="align-middle">
                             <td className="py-3 pr-3">
@@ -429,7 +439,7 @@ export default function UploadPage() {
                                 <button
                                   className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-50"
                                   onClick={() =>
-                                    c.sheet_path && downloadPath(c.id, c.sheet_path, sheetLabel)
+                                    c.sheet_path && downloadConversionFile(c.id, "sheet")
                                   }
                                   disabled={!c.sheet_path || downloadingKey === sheetKey}
                                   type="button"
@@ -440,7 +450,7 @@ export default function UploadPage() {
                                 <button
                                   className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
                                   onClick={() =>
-                                    c.pdf_path && downloadPath(c.id, c.pdf_path, "pdf")
+                                    c.pdf_path && downloadConversionFile(c.id, "pdf")
                                   }
                                   disabled={!c.pdf_path || downloadingKey === pdfKey}
                                   type="button"
