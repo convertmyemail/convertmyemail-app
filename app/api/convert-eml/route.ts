@@ -32,12 +32,16 @@ async function rowsToPdfBuffer(
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
+  // Layout
   const margin = 50;
-  const lineGap = 6;
-
   const titleSize = 14;
-  const labelSize = 10;
-  const bodySize = 10;
+  const metaLabelSize = 10;
+  const metaValueSize = 10;
+  const bodySize = 11;
+
+  const lineGap = 6; // main line spacing
+  const paraGap = 8; // space between paragraphs
+  const recordGap = 18; // extra separation at end
 
   const generated = new Date().toISOString();
 
@@ -45,10 +49,14 @@ async function rowsToPdfBuffer(
   let p = makePage();
   let { width, height } = p.getSize();
 
+  // Header/footer geometry
   const headerTop = height - margin + 12;
-  const footerBottom = margin - 22;
-  const contentTop = height - margin - 30;
-  const contentBottom = margin + 18;
+  const contentTop = height - margin - 34;
+
+  // Footer area (rule + brand + page number)
+  const footerY = margin - 26;
+  const footerRuleY = footerY + 14;
+  const contentBottom = footerRuleY + 10; // keep content above the footer rule
 
   let y = contentTop;
 
@@ -78,18 +86,31 @@ async function rowsToPdfBuffer(
   };
 
   const drawFooter = (pageNumber: number, totalPages: number) => {
-    const text = `Page ${pageNumber} of ${totalPages}`;
-
+    // divider line
     p.drawLine({
-      start: { x: margin, y: footerBottom + 14 },
-      end: { x: width - margin, y: footerBottom + 14 },
+      start: { x: margin, y: footerRuleY },
+      end: { x: width - margin, y: footerRuleY },
       thickness: 1,
       color: rgb(0.9, 0.9, 0.9),
     });
 
+    // centered brand
+    const brand = "Converted by ConvertMyEmail.com";
+    const brandSize = 9;
+    const brandWidth = font.widthOfTextAtSize(brand, brandSize);
+    p.drawText(brand, {
+      x: (width - brandWidth) / 2,
+      y: footerY,
+      size: brandSize,
+      font,
+      color: rgb(0.6, 0.6, 0.6),
+    });
+
+    // page number (right)
+    const text = `Page ${pageNumber} of ${totalPages}`;
     p.drawText(text, {
       x: width - margin - font.widthOfTextAtSize(text, 9),
-      y: footerBottom,
+      y: footerY,
       size: 9,
       font,
       color: rgb(0.35, 0.35, 0.35),
@@ -99,7 +120,7 @@ async function rowsToPdfBuffer(
   const newPage = () => {
     p = makePage();
     ({ width, height } = p.getSize());
-    y = height - margin - 30;
+    y = height - margin - 34;
     drawHeader();
   };
 
@@ -107,86 +128,191 @@ async function rowsToPdfBuffer(
     if (y - needed < contentBottom) newPage();
   };
 
-  const wrapAndDraw = (
-    text: string,
-    opts: { size?: number; useBold?: boolean; color?: any; indent?: number } = {}
-  ) => {
-    const size = opts.size ?? bodySize;
-    const f = opts.useBold ? fontBold : font;
-    const color = opts.color ?? rgb(0, 0, 0);
-    const indent = opts.indent ?? 0;
+  // Word wrap into lines for pdf-lib
+  const wrapLines = (text: string, f: any, size: number, maxWidth: number) => {
+    const clean = (text || "").replace(/\r\n/g, "\n");
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [""];
 
-    const maxWidth = width - margin * 2 - indent;
-    const words = (text || "").split(/\s+/).filter(Boolean);
-
-    if (words.length === 0) {
-      ensureSpace(size + lineGap);
-      y -= size + lineGap;
-      return;
-    }
-
+    const lines: string[] = [];
     let line = "";
-    const flush = () => {
-      ensureSpace(size + lineGap);
-      p.drawText(line, { x: margin + indent, y, size, font: f, color });
-      y -= size + lineGap;
-      line = "";
-    };
 
     for (const w of words) {
       const test = line ? `${line} ${w}` : w;
       const wWidth = f.widthOfTextAtSize(test, size);
       if (wWidth > maxWidth && line) {
-        flush();
+        lines.push(line);
         line = w;
       } else {
         line = test;
       }
     }
-    if (line) flush();
+    if (line) lines.push(line);
+    return lines;
+  };
+
+  const drawWrapped = (
+    text: string,
+    opts: {
+      x?: number;
+      size?: number;
+      useBold?: boolean;
+      color?: any;
+      maxWidth?: number;
+      lineGapOverride?: number;
+    } = {}
+  ) => {
+    const x = opts.x ?? margin;
+    const size = opts.size ?? bodySize;
+    const f = opts.useBold ? fontBold : font;
+    const color = opts.color ?? rgb(0, 0, 0);
+    const maxWidth = opts.maxWidth ?? width - margin * 2;
+    const gap = opts.lineGapOverride ?? lineGap;
+
+    const lines = wrapLines(text || "", f, size, maxWidth);
+
+    for (const line of lines) {
+      ensureSpace(size + gap);
+      if (line) {
+        p.drawText(line, { x, y, size, font: f, color });
+      }
+      y -= size + gap;
+    }
+  };
+
+  const hr = () => {
+    ensureSpace(16);
+    p.drawLine({
+      start: { x: margin, y: y + 6 },
+      end: { x: width - margin, y: y + 6 },
+      thickness: 1,
+      color: rgb(0.9, 0.9, 0.9),
+    });
+    y -= 12;
+  };
+
+  const drawMetaCard = (fields: Array<{ label: string; value: string }>) => {
+    const cardX = margin;
+    const cardW = width - margin * 2;
+
+    const labelX = cardX + 12;
+    const valueX = cardX + 78; // label column
+    const valueMaxW = cardX + cardW - 12 - valueX;
+
+    // Estimate height by wrapping values
+    let linesCount = 0;
+    for (const f of fields) {
+      const vLines = wrapLines(f.value || "", font, metaValueSize, valueMaxW);
+      linesCount += Math.max(1, vLines.length);
+    }
+
+    const rowH = metaValueSize + 5;
+    const cardH = 14 + linesCount * rowH + 10;
+
+    ensureSpace(cardH + 18);
+
+    // Background rectangle
+    p.drawRectangle({
+      x: cardX,
+      y: y - cardH,
+      width: cardW,
+      height: cardH,
+      color: rgb(0.976, 0.98, 0.984),
+      borderColor: rgb(0.9, 0.9, 0.9),
+      borderWidth: 1,
+    });
+
+    // Write fields inside
+    let cy = y - 18;
+    for (const f of fields) {
+      p.drawText(f.label, {
+        x: labelX,
+        y: cy,
+        size: metaLabelSize,
+        font: fontBold,
+        color: rgb(0.25, 0.25, 0.25),
+      });
+
+      const vLines = wrapLines(f.value || "", font, metaValueSize, valueMaxW);
+      const firstLine = vLines[0] || "";
+
+      p.drawText(firstLine, {
+        x: valueX,
+        y: cy,
+        size: metaValueSize,
+        font,
+        color: rgb(0.25, 0.25, 0.25),
+      });
+
+      let extraY = cy;
+      for (let i = 1; i < vLines.length; i++) {
+        extraY -= rowH;
+        p.drawText(vLines[i], {
+          x: valueX,
+          y: extraY,
+          size: metaValueSize,
+          font,
+          color: rgb(0.25, 0.25, 0.25),
+        });
+      }
+
+      cy = extraY - rowH;
+    }
+
+    // Move y below card + padding
+    y = y - cardH - 14;
   };
 
   drawHeader();
 
   rows.forEach((r, idx) => {
-    ensureSpace(70);
+    // ✅ Big readability improvement: start each email on its own page
+    if (idx > 0) newPage();
 
-    wrapAndDraw(`Record ${idx + 1}`, { size: 12, useBold: true });
-    wrapAndDraw(`Record ID: ${String(idx + 1).padStart(4, "0")}`, {
+    drawWrapped(`Email ${idx + 1}`, { size: 13, useBold: true });
+    drawWrapped(`Record ID: ${String(idx + 1).padStart(4, "0")}`, {
       size: 9,
       color: rgb(0.35, 0.35, 0.35),
+      lineGapOverride: 4,
     });
-    y -= 4;
-
-    const field = (label: string, value: string) => {
-      wrapAndDraw(`${label}:`, { size: labelSize, useBold: true });
-      wrapAndDraw(value || "", { size: bodySize, indent: 14 });
-      y -= 2;
-    };
-
-    field("File", r.file_name || "");
-    field("From", r.from || "");
-    field("To", r.to || "");
-    field("Date", r.date || "");
-    field("Subject", r.subject || "");
-
     y -= 6;
 
-    wrapAndDraw("Body:", { size: labelSize, useBold: true });
-    wrapAndDraw(r.body_text || "", { size: bodySize, indent: 14 });
+    drawMetaCard([
+      { label: "File:", value: r.file_name || "" },
+      { label: "From:", value: r.from || "" },
+      { label: "To:", value: r.to || "" },
+      { label: "Date:", value: r.date || "" },
+      { label: "Subject:", value: r.subject || "" },
+    ]);
 
-    y -= 10;
+    hr();
 
-    ensureSpace(12);
-    p.drawLine({
-      start: { x: margin, y },
-      end: { x: width - margin, y },
-      thickness: 1,
-      color: rgb(0.9, 0.9, 0.9),
-    });
-    y -= 14;
+    drawWrapped("Body", { size: 11, useBold: true, color: rgb(0.15, 0.15, 0.15) });
+    y -= 2;
+
+    const body = (r.body_text || "").trim() || "(No body text)";
+    const paragraphs = body
+      .replace(/\r\n/g, "\n")
+      .split(/\n\s*\n+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    const bodyMaxW = width - margin * 2;
+
+    if (paragraphs.length === 0) {
+      drawWrapped("(No body text)", { size: bodySize, color: rgb(0.2, 0.2, 0.2) });
+    } else {
+      for (const para of paragraphs) {
+        const normalized = para.replace(/\n+/g, " ");
+        drawWrapped(normalized, { size: bodySize, maxWidth: bodyMaxW });
+        y -= paraGap;
+      }
+    }
+
+    y -= recordGap;
   });
 
+  // Footers after pages exist
   const pages = pdfDoc.getPages();
   const totalPages = pages.length;
   pages.forEach((page, i) => {
@@ -373,7 +499,13 @@ export async function POST(req: Request) {
 
       const subject = parsed.subject || "";
       const date = parsed.date ? parsed.date.toISOString() : "";
-      const text = (parsed.text || "").replace(/\s+/g, " ").trim();
+
+      // ✅ Preserve paragraph breaks for nicer PDF rendering
+      const text = (parsed.text || "")
+        .replace(/\r\n/g, "\n")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 
       parsedRows.push({
         file_name: originalName,
@@ -443,7 +575,7 @@ export async function POST(req: Request) {
           "Content-Type": "application/pdf",
           "Content-Disposition": 'attachment; filename="email-records.pdf"',
           "Cache-Control": "no-store",
-          "Pragma": "no-cache",
+          Pragma: "no-cache",
           "X-Content-Type-Options": "nosniff",
           "Content-Length": String(pdfBuffer.byteLength),
           "X-Conversion-Id": conversion.id,
@@ -454,10 +586,11 @@ export async function POST(req: Request) {
     return new NextResponse(new Uint8Array(xlsxBytes), {
       status: 200,
       headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
         "Cache-Control": "no-store",
-        "Pragma": "no-cache",
+        Pragma: "no-cache",
         "X-Content-Type-Options": "nosniff",
         "Content-Length": String(xlsxBytes.byteLength),
         "X-Conversion-Id": conversion.id,
