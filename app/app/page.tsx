@@ -12,6 +12,7 @@ type Conversion = {
   csv_path: string | null;
   pdf_path: string | null;
   sheet_path: string | null; // preferred xlsx, fallback csv
+  message_count?: number | null; // ✅ NEW
 };
 
 export default function UploadPage() {
@@ -52,33 +53,12 @@ export default function UploadPage() {
     }
   };
 
-  function getFilenameFromContentDisposition(disposition: string | null) {
-    if (!disposition) return null;
-
-    // Try RFC 5987: filename*=UTF-8''...
-    const star = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
-    if (star?.[1]) {
-      try {
-        return decodeURIComponent(star[1].trim());
-      } catch {
-        return star[1].trim();
-      }
-    }
-
-    // Fallback: filename="..."
-    const normal = disposition.match(/filename\s*=\s*"([^"]+)"/i);
-    if (normal?.[1]) return normal[1];
-
-    // Fallback: filename=...
-    const bare = disposition.match(/filename\s*=\s*([^;]+)/i);
-    if (bare?.[1]) return bare[1].trim().replace(/^"|"$/g, "");
-
-    return null;
-  }
-
   // ✅ Download without leaving the site (same-origin blob)
-  // Server route: /api/download?id=<conversionId>&kind=pdf|sheet
-  const downloadConversionFile = async (id: string, kind: "pdf" | "sheet") => {
+  // Server route: /api/download?id=<conversionId>&kind=pdf|sheet|xlsx|csv
+  const downloadConversionFile = async (
+    id: string,
+    kind: "pdf" | "sheet" | "xlsx" | "csv"
+  ) => {
     const key = `${id}:${kind}`;
     setDownloadingKey(key);
     setHistoryError("");
@@ -98,12 +78,16 @@ export default function UploadPage() {
         throw new Error(msg);
       }
 
-      const disposition = res.headers.get("content-disposition");
-      const headerName = getFilenameFromContentDisposition(disposition);
-
+      // Prefer filename from server header
+      const disposition = res.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
       const filename =
-        headerName ||
-        (kind === "pdf" ? "email-records.pdf" : "converted-emails.xlsx");
+        match?.[1] ||
+        (kind === "pdf"
+          ? "email-records.pdf"
+          : kind === "csv"
+            ? "converted-emails.csv"
+            : "converted-emails.xlsx");
 
       const blob = await res.blob();
       const objectUrl = window.URL.createObjectURL(blob);
@@ -357,9 +341,7 @@ export default function UploadPage() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-lg font-semibold">Conversion history</h2>
-                  <p className="mt-1 text-sm text-gray-600">
-                    Download previously generated files.
-                  </p>
+                  <p className="mt-1 text-sm text-gray-600">Download previously generated files.</p>
                 </div>
 
                 <button
@@ -390,6 +372,7 @@ export default function UploadPage() {
                       <tr className="text-left text-xs text-gray-500">
                         <th className="py-3 pr-3 font-medium">File</th>
                         <th className="py-3 pr-3 font-medium">Converted</th>
+                        <th className="py-3 pr-3 font-medium">Messages</th> {/* ✅ NEW */}
                         <th className="py-3 pr-3 font-medium">Formats</th>
                         <th className="py-3 text-right font-medium">Download</th>
                       </tr>
@@ -405,13 +388,18 @@ export default function UploadPage() {
                               <div className="text-sm text-gray-900">
                                 {c.original_filename || "(unnamed)"}
                               </div>
-                              <div className="text-xs text-gray-500">
-                                ID: {c.id.slice(0, 8)}
-                              </div>
+                              <div className="text-xs text-gray-500">ID: {c.id.slice(0, 8)}</div>
                             </td>
 
                             <td className="py-3 pr-3 text-gray-600">
                               {new Date(c.created_at).toLocaleString()}
+                            </td>
+
+                            <td className="py-3 pr-3">
+                              <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                                {(c.message_count ?? 1).toLocaleString()}{" "}
+                                {(c.message_count ?? 1) === 1 ? "message" : "messages"}
+                              </span>
                             </td>
 
                             <td className="py-3 pr-3">
@@ -449,9 +437,7 @@ export default function UploadPage() {
 
                                 <button
                                   className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                                  onClick={() =>
-                                    c.pdf_path && downloadConversionFile(c.id, "pdf")
-                                  }
+                                  onClick={() => c.pdf_path && downloadConversionFile(c.id, "pdf")}
                                   disabled={!c.pdf_path || downloadingKey === pdfKey}
                                   type="button"
                                 >

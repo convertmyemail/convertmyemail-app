@@ -15,7 +15,9 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("conversions")
-    .select("id, user_id, original_filename, created_at, xlsx_path, csv_path, pdf_path")
+    .select(
+      "id, user_id, original_filename, created_at, xlsx_path, csv_path, pdf_path, message_count"
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(50);
@@ -23,17 +25,15 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const conversions =
-    (data ?? []).map((c) => ({
+    (data ?? []).map((c: any) => ({
       id: c.id,
       original_filename: c.original_filename,
       created_at: c.created_at,
-      // new
       xlsx_path: c.xlsx_path ?? null,
-      // legacy
       csv_path: c.csv_path ?? null,
       pdf_path: c.pdf_path ?? null,
-      // convenience: prefer xlsx, fallback to csv
       sheet_path: c.xlsx_path ?? c.csv_path ?? null,
+      message_count: typeof c.message_count === "number" ? c.message_count : 1,
     })) ?? [];
 
   return NextResponse.json({ conversions });

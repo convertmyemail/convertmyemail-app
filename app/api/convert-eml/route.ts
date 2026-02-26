@@ -44,30 +44,9 @@ type ThreadMessage = {
 };
 
 function parseOutlookHeaderBlock(lines: string[]) {
-  // Outlook blocks often look like:
-  // From: X
-  // Sent: Y
-  // To: Z
-  // Subject: S
-  //
-  // or "Date:" instead of "Sent:"
   const meta: Partial<ThreadMessage> = {};
-  let consumed = 0;
-
-  const take = (prefix: string, key: keyof ThreadMessage) => {
-    const re = new RegExp(`^${prefix}\\s*:\\s*(.*)$`, "i");
-    const m = lines[consumed]?.match(re);
-    if (m) {
-      meta[key] = (m[1] || "").trim();
-      consumed += 1;
-      return true;
-    }
-    return false;
-  };
-
-  // We allow some variability/order, but typically it's 4 lines.
-  // We'll scan up to the first ~8 lines until blank line.
   const maxScan = Math.min(lines.length, 10);
+
   let i = 0;
   while (i < maxScan) {
     const line = (lines[i] || "").trim();
@@ -86,40 +65,37 @@ function parseOutlookHeaderBlock(lines: string[]) {
     i += 1;
   }
 
-  consumed = i;
-
-  // If we got at least From/Subject/To/Date-ish, treat as a header block
   const score =
     (meta.from ? 1 : 0) +
     (meta.to ? 1 : 0) +
     (meta.subject ? 1 : 0) +
     (meta.date ? 1 : 0);
 
-  return { meta, consumedLines: score >= 2 ? consumed : 0 };
+  return { meta, consumedLines: score >= 2 ? i : 0 };
 }
 
-function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "body_text">) {
+function extractThreadMessages(
+  fullText: string,
+  fallback: Omit<ThreadMessage, "body_text">
+) {
   const text = normalizeBody(fullText);
   if (!text) return [];
 
   const lines = text.split("\n");
 
-  // Identify cut points (start indices) for message boundaries
+  // Identify cut points for message boundaries (line indices)
   const cutIdxs = new Set<number>();
   cutIdxs.add(0);
 
   for (let i = 0; i < lines.length; i++) {
     const line = (lines[i] || "").trim();
 
-    // Outlook “Original Message”
     if (/^-+\s*Original Message\s*-+$/i.test(line)) {
       cutIdxs.add(i);
       continue;
     }
 
-    // Outlook header block starting at "From:"
     if (/^From\s*:/i.test(line)) {
-      // Make sure it looks like a header block (next few lines include To/Subject/Sent/Date)
       const next = lines.slice(i, i + 8);
       const joined = next.join("\n").toLowerCase();
       if (
@@ -133,14 +109,11 @@ function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "
       }
     }
 
-    // Gmail-style reply marker
     if (/^On .+wrote:\s*$/i.test(line)) {
-      // Usually the quoted message begins right after this line
       cutIdxs.add(i);
       continue;
     }
 
-    // Separator lines (common in forwards/clients)
     if (/^_{8,}\s*$/.test(line) || /^-{8,}\s*$/.test(line)) {
       cutIdxs.add(i);
       continue;
@@ -151,7 +124,6 @@ function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "
     .filter((n) => n >= 0 && n < lines.length)
     .sort((a, b) => a - b);
 
-  // Build segments
   const segments: string[] = [];
   for (let i = 0; i < cuts.length; i++) {
     const start = cuts[i];
@@ -160,34 +132,28 @@ function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "
     if (seg) segments.push(seg);
   }
 
-  // If our cutting was too aggressive (e.g. separators inside a message),
-  // dedupe identical segments and keep order.
+  // light dedupe
   const uniqueSegments: string[] = [];
   const seen = new Set<string>();
   for (const s of segments) {
-    const key = s.slice(0, 300); // cheap-ish dedupe key
+    const key = s.slice(0, 300);
     if (!seen.has(key)) {
       seen.add(key);
       uniqueSegments.push(s);
     }
   }
 
-  // Convert segments to messages with best-effort meta extraction
   const messages: ThreadMessage[] = uniqueSegments.map((seg) => {
     const sLines = seg.split("\n");
 
-    // If Gmail marker: "On ... wrote:" lives at top of this segment sometimes
-    // We treat it as part of the boundary; body starts after that line.
     let startAt = 0;
     if (/^On .+wrote:\s*$/i.test((sLines[0] || "").trim())) {
       startAt = 1;
     }
 
-    // If Outlook header block: parse it and remove it from body
     const { meta, consumedLines } = parseOutlookHeaderBlock(sLines.slice(startAt));
     const headerConsumed = consumedLines > 0 ? consumedLines : 0;
 
-    // Body remainder
     const bodyRaw = sLines.slice(startAt + headerConsumed).join("\n").trim();
     const bodyClean = normalizeBody(stripQuotePrefix(bodyRaw));
 
@@ -200,7 +166,6 @@ function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "
     };
   });
 
-  // Remove tiny/garbage segments (like just "From:" line or separators)
   const filtered = messages.filter((m) => {
     const body = (m.body_text || "").trim();
     if (!body) return false;
@@ -209,7 +174,6 @@ function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "
     return true;
   });
 
-  // If nothing survived, fall back to the whole body as one message
   if (filtered.length === 0) {
     return [
       {
@@ -236,16 +200,15 @@ async function rowsToPdfBuffer(
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  // Layout
   const margin = 50;
   const titleSize = 14;
   const metaLabelSize = 10;
   const metaValueSize = 10;
   const bodySize = 11;
 
-  const lineGap = 6; // main line spacing
-  const paraGap = 8; // space between paragraphs
-  const recordGap = 18; // extra separation at end
+  const lineGap = 6;
+  const paraGap = 8;
+  const recordGap = 18;
 
   const generated = new Date().toISOString();
 
@@ -253,14 +216,12 @@ async function rowsToPdfBuffer(
   let p = makePage();
   let { width, height } = p.getSize();
 
-  // Header/footer geometry
   const headerTop = height - margin + 12;
   const contentTop = height - margin - 34;
 
-  // Footer area (rule + brand + page number)
   const footerY = margin - 26;
   const footerRuleY = footerY + 14;
-  const contentBottom = footerRuleY + 10; // keep content above the footer rule
+  const contentBottom = footerRuleY + 10;
 
   let y = contentTop;
 
@@ -706,7 +667,6 @@ export async function POST(req: Request) {
       const rawText = (parsed.text || "").toString();
       const normalizedText = normalizeBody(rawText);
 
-      // ✅ Thread splitting (Option B)
       const threadMessages = extractThreadMessages(normalizedText, {
         from: topFrom,
         to: topTo,
@@ -714,9 +674,9 @@ export async function POST(req: Request) {
         date: topDate,
       });
 
-      // Emit one row per message in the thread
       threadMessages.forEach((m, i) => {
-        const suffix = threadMessages.length > 1 ? ` (msg ${i + 1} of ${threadMessages.length})` : "";
+        const suffix =
+          threadMessages.length > 1 ? ` (msg ${i + 1} of ${threadMessages.length})` : "";
         parsedRows.push({
           file_name: `${originalName}${suffix}`,
           from: m.from || topFrom,
@@ -759,7 +719,7 @@ export async function POST(req: Request) {
 
     const representativeEmlPath = uploadedEmlPaths[0];
     const displayName =
-      files.length === 1 ? (files[0] as File).name : `${files.length} files`;
+      parsedRows.length === 1 ? parsedRows[0].file_name : `${parsedRows.length} messages`;
 
     const { data: conversion, error: convErr } = await supabase
       .from("conversions")
@@ -770,6 +730,7 @@ export async function POST(req: Request) {
         xlsx_path: xlsxPath,
         pdf_path: pdfPath,
         csv_path: null,
+        message_count: parsedRows.length, // ✅ NEW
       })
       .select("id")
       .single();
