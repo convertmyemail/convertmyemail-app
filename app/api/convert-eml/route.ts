@@ -18,6 +18,210 @@ function titleCaseHeader(key: string) {
   return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function normalizeBody(text: string) {
+  return (text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\u00A0/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function stripQuotePrefix(s: string) {
+  // remove leading ">" quote marks but keep content
+  return s
+    .split("\n")
+    .map((line) => line.replace(/^\s*>+\s?/, ""))
+    .join("\n");
+}
+
+type ThreadMessage = {
+  from: string;
+  to: string;
+  subject: string;
+  date: string;
+  body_text: string;
+};
+
+function parseOutlookHeaderBlock(lines: string[]) {
+  // Outlook blocks often look like:
+  // From: X
+  // Sent: Y
+  // To: Z
+  // Subject: S
+  //
+  // or "Date:" instead of "Sent:"
+  const meta: Partial<ThreadMessage> = {};
+  let consumed = 0;
+
+  const take = (prefix: string, key: keyof ThreadMessage) => {
+    const re = new RegExp(`^${prefix}\\s*:\\s*(.*)$`, "i");
+    const m = lines[consumed]?.match(re);
+    if (m) {
+      meta[key] = (m[1] || "").trim();
+      consumed += 1;
+      return true;
+    }
+    return false;
+  };
+
+  // We allow some variability/order, but typically it's 4 lines.
+  // We'll scan up to the first ~8 lines until blank line.
+  const maxScan = Math.min(lines.length, 10);
+  let i = 0;
+  while (i < maxScan) {
+    const line = (lines[i] || "").trim();
+    if (!line) break;
+
+    const mFrom = line.match(/^From\s*:\s*(.*)$/i);
+    const mTo = line.match(/^To\s*:\s*(.*)$/i);
+    const mSub = line.match(/^Subject\s*:\s*(.*)$/i);
+    const mSent = line.match(/^(Sent|Date)\s*:\s*(.*)$/i);
+
+    if (mFrom) meta.from = (mFrom[1] || "").trim();
+    else if (mTo) meta.to = (mTo[1] || "").trim();
+    else if (mSub) meta.subject = (mSub[1] || "").trim();
+    else if (mSent) meta.date = (mSent[2] || "").trim();
+
+    i += 1;
+  }
+
+  consumed = i;
+
+  // If we got at least From/Subject/To/Date-ish, treat as a header block
+  const score =
+    (meta.from ? 1 : 0) +
+    (meta.to ? 1 : 0) +
+    (meta.subject ? 1 : 0) +
+    (meta.date ? 1 : 0);
+
+  return { meta, consumedLines: score >= 2 ? consumed : 0 };
+}
+
+function extractThreadMessages(fullText: string, fallback: Omit<ThreadMessage, "body_text">) {
+  const text = normalizeBody(fullText);
+  if (!text) return [];
+
+  const lines = text.split("\n");
+
+  // Identify cut points (start indices) for message boundaries
+  const cutIdxs = new Set<number>();
+  cutIdxs.add(0);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || "").trim();
+
+    // Outlook “Original Message”
+    if (/^-+\s*Original Message\s*-+$/i.test(line)) {
+      cutIdxs.add(i);
+      continue;
+    }
+
+    // Outlook header block starting at "From:"
+    if (/^From\s*:/i.test(line)) {
+      // Make sure it looks like a header block (next few lines include To/Subject/Sent/Date)
+      const next = lines.slice(i, i + 8);
+      const joined = next.join("\n").toLowerCase();
+      if (
+        joined.includes("to:") ||
+        joined.includes("subject:") ||
+        joined.includes("sent:") ||
+        joined.includes("date:")
+      ) {
+        cutIdxs.add(i);
+        continue;
+      }
+    }
+
+    // Gmail-style reply marker
+    if (/^On .+wrote:\s*$/i.test(line)) {
+      // Usually the quoted message begins right after this line
+      cutIdxs.add(i);
+      continue;
+    }
+
+    // Separator lines (common in forwards/clients)
+    if (/^_{8,}\s*$/.test(line) || /^-{8,}\s*$/.test(line)) {
+      cutIdxs.add(i);
+      continue;
+    }
+  }
+
+  const cuts = Array.from(cutIdxs)
+    .filter((n) => n >= 0 && n < lines.length)
+    .sort((a, b) => a - b);
+
+  // Build segments
+  const segments: string[] = [];
+  for (let i = 0; i < cuts.length; i++) {
+    const start = cuts[i];
+    const end = i + 1 < cuts.length ? cuts[i + 1] : lines.length;
+    const seg = lines.slice(start, end).join("\n").trim();
+    if (seg) segments.push(seg);
+  }
+
+  // If our cutting was too aggressive (e.g. separators inside a message),
+  // dedupe identical segments and keep order.
+  const uniqueSegments: string[] = [];
+  const seen = new Set<string>();
+  for (const s of segments) {
+    const key = s.slice(0, 300); // cheap-ish dedupe key
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueSegments.push(s);
+    }
+  }
+
+  // Convert segments to messages with best-effort meta extraction
+  const messages: ThreadMessage[] = uniqueSegments.map((seg) => {
+    const sLines = seg.split("\n");
+
+    // If Gmail marker: "On ... wrote:" lives at top of this segment sometimes
+    // We treat it as part of the boundary; body starts after that line.
+    let startAt = 0;
+    if (/^On .+wrote:\s*$/i.test((sLines[0] || "").trim())) {
+      startAt = 1;
+    }
+
+    // If Outlook header block: parse it and remove it from body
+    const { meta, consumedLines } = parseOutlookHeaderBlock(sLines.slice(startAt));
+    const headerConsumed = consumedLines > 0 ? consumedLines : 0;
+
+    // Body remainder
+    const bodyRaw = sLines.slice(startAt + headerConsumed).join("\n").trim();
+    const bodyClean = normalizeBody(stripQuotePrefix(bodyRaw));
+
+    return {
+      from: meta.from ?? fallback.from,
+      to: meta.to ?? fallback.to,
+      subject: meta.subject ?? fallback.subject,
+      date: meta.date ?? fallback.date,
+      body_text: bodyClean || "(No body text)",
+    };
+  });
+
+  // Remove tiny/garbage segments (like just "From:" line or separators)
+  const filtered = messages.filter((m) => {
+    const body = (m.body_text || "").trim();
+    if (!body) return false;
+    if (body.length < 10) return false;
+    if (/^_{8,}$/.test(body) || /^-{8,}$/.test(body)) return false;
+    return true;
+  });
+
+  // If nothing survived, fall back to the whole body as one message
+  if (filtered.length === 0) {
+    return [
+      {
+        ...fallback,
+        body_text: normalizeBody(stripQuotePrefix(text)) || "(No body text)",
+      },
+    ];
+  }
+
+  return filtered;
+}
+
 async function rowsToPdfBuffer(
   rows: Array<{
     file_name: string;
@@ -86,7 +290,6 @@ async function rowsToPdfBuffer(
   };
 
   const drawFooter = (pageNumber: number, totalPages: number) => {
-    // divider line
     p.drawLine({
       start: { x: margin, y: footerRuleY },
       end: { x: width - margin, y: footerRuleY },
@@ -94,7 +297,6 @@ async function rowsToPdfBuffer(
       color: rgb(0.9, 0.9, 0.9),
     });
 
-    // centered brand
     const brand = "Converted by ConvertMyEmail.com";
     const brandSize = 9;
     const brandWidth = font.widthOfTextAtSize(brand, brandSize);
@@ -106,7 +308,6 @@ async function rowsToPdfBuffer(
       color: rgb(0.6, 0.6, 0.6),
     });
 
-    // page number (right)
     const text = `Page ${pageNumber} of ${totalPages}`;
     p.drawText(text, {
       x: width - margin - font.widthOfTextAtSize(text, 9),
@@ -128,7 +329,6 @@ async function rowsToPdfBuffer(
     if (y - needed < contentBottom) newPage();
   };
 
-  // Word wrap into lines for pdf-lib
   const wrapLines = (text: string, f: any, size: number, maxWidth: number) => {
     const clean = (text || "").replace(/\r\n/g, "\n");
     const words = clean.split(/\s+/).filter(Boolean);
@@ -196,10 +396,9 @@ async function rowsToPdfBuffer(
     const cardW = width - margin * 2;
 
     const labelX = cardX + 12;
-    const valueX = cardX + 78; // label column
+    const valueX = cardX + 78;
     const valueMaxW = cardX + cardW - 12 - valueX;
 
-    // Estimate height by wrapping values
     let linesCount = 0;
     for (const f of fields) {
       const vLines = wrapLines(f.value || "", font, metaValueSize, valueMaxW);
@@ -211,7 +410,6 @@ async function rowsToPdfBuffer(
 
     ensureSpace(cardH + 18);
 
-    // Background rectangle
     p.drawRectangle({
       x: cardX,
       y: y - cardH,
@@ -222,7 +420,6 @@ async function rowsToPdfBuffer(
       borderWidth: 1,
     });
 
-    // Write fields inside
     let cy = y - 18;
     for (const f of fields) {
       p.drawText(f.label, {
@@ -259,14 +456,12 @@ async function rowsToPdfBuffer(
       cy = extraY - rowH;
     }
 
-    // Move y below card + padding
     y = y - cardH - 14;
   };
 
   drawHeader();
 
   rows.forEach((r, idx) => {
-    // ✅ Big readability improvement: start each email on its own page
     if (idx > 0) newPage();
 
     drawWrapped(`Email ${idx + 1}`, { size: 13, useBold: true });
@@ -312,7 +507,6 @@ async function rowsToPdfBuffer(
     y -= recordGap;
   });
 
-  // Footers after pages exist
   const pages = pdfDoc.getPages();
   const totalPages = pages.length;
   pages.forEach((page, i) => {
@@ -339,7 +533,6 @@ async function rowsToXlsxBuffer(
   wb.creator = "ConvertMyEmail";
   wb.created = new Date();
 
-  // Primary sheet
   const ws = wb.addWorksheet("Emails", {
     views: [{ state: "frozen", ySplit: 1 }],
     properties: { defaultRowHeight: 20 },
@@ -369,18 +562,13 @@ async function rowsToXlsxBuffer(
               : 28,
   }));
 
-  // Header styling
   const headerRow = ws.getRow(1);
   headerRow.font = { bold: true, size: 12 };
   headerRow.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   headerRow.height = 24;
 
   headerRow.eachCell((cell) => {
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFEFEFEF" },
-    };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFEFEF" } };
     cell.border = {
       top: { style: "thin", color: { argb: "FFCCCCCC" } },
       left: { style: "thin", color: { argb: "FFCCCCCC" } },
@@ -389,7 +577,6 @@ async function rowsToXlsxBuffer(
     };
   });
 
-  // Add rows
   rows.forEach((r) => {
     ws.addRow({
       file_name: r.file_name || "",
@@ -401,26 +588,16 @@ async function rowsToXlsxBuffer(
     });
   });
 
-  // Enable auto-filter (A-F)
-  ws.autoFilter = {
-    from: "A1",
-    to: `F${ws.rowCount}`,
-  };
+  ws.autoFilter = { from: "A1", to: `F${ws.rowCount}` };
 
-  // Body styling + zebra striping + borders
   ws.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
 
     row.alignment = { vertical: "top", horizontal: "left", wrapText: true };
 
-    // Zebra striping
     if (rowNumber % 2 === 0) {
       row.eachCell((cell) => {
-        cell.fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: "FFF9F9F9" },
-        };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9F9F9" } };
       });
     }
 
@@ -435,7 +612,6 @@ async function rowsToXlsxBuffer(
     });
   });
 
-  // Dynamic row height based on body text length
   for (let i = 2; i <= ws.rowCount; i++) {
     const row = ws.getRow(i);
     const body = String(row.getCell("body_text").value ?? "");
@@ -443,17 +619,13 @@ async function rowsToXlsxBuffer(
     row.height = 20 + lines * 10;
   }
 
-  // Summary sheet (professional touch)
   const summary = wb.addWorksheet("Summary");
   summary.getCell("A1").value = "ConvertMyEmail Export Summary";
   summary.getCell("A1").font = { bold: true, size: 14 };
-
   summary.getCell("A3").value = "Total Emails:";
   summary.getCell("B3").value = rows.length;
-
   summary.getCell("A4").value = "Generated:";
   summary.getCell("B4").value = new Date().toISOString();
-
   summary.columns = [{ width: 22 }, { width: 40 }];
 
   const xlsx = await wb.xlsx.writeBuffer();
@@ -518,37 +690,41 @@ export async function POST(req: Request) {
 
       const parsed = await simpleParser(buf);
 
-      const from =
+      const topFrom =
         parsed.from?.text?.toString() ||
-        (parsed.from as any)?.value
-          ?.map((v: { address?: string }) => v.address ?? "")
-          .join(", ") ||
+        (parsed.from as any)?.value?.map((v: { address?: string }) => v.address ?? "").join(", ") ||
         "";
 
-      const to =
+      const topTo =
         parsed.to?.text?.toString() ||
-        (parsed.to as any)?.value
-          ?.map((v: { address?: string }) => v.address ?? "")
-          .join(", ") ||
+        (parsed.to as any)?.value?.map((v: { address?: string }) => v.address ?? "").join(", ") ||
         "";
 
-      const subject = parsed.subject || "";
-      const date = parsed.date ? parsed.date.toISOString() : "";
+      const topSubject = parsed.subject || "";
+      const topDate = parsed.date ? parsed.date.toISOString() : "";
 
-      // ✅ Preserve paragraph breaks for nicer PDF rendering
-      const text = (parsed.text || "")
-        .replace(/\r\n/g, "\n")
-        .replace(/[ \t]+/g, " ")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
+      const rawText = (parsed.text || "").toString();
+      const normalizedText = normalizeBody(rawText);
 
-      parsedRows.push({
-        file_name: originalName,
-        from,
-        to,
-        subject,
-        date,
-        body_text: text,
+      // ✅ Thread splitting (Option B)
+      const threadMessages = extractThreadMessages(normalizedText, {
+        from: topFrom,
+        to: topTo,
+        subject: topSubject,
+        date: topDate,
+      });
+
+      // Emit one row per message in the thread
+      threadMessages.forEach((m, i) => {
+        const suffix = threadMessages.length > 1 ? ` (msg ${i + 1} of ${threadMessages.length})` : "";
+        parsedRows.push({
+          file_name: `${originalName}${suffix}`,
+          from: m.from || topFrom,
+          to: m.to || topTo,
+          subject: m.subject || topSubject,
+          date: m.date || topDate,
+          body_text: m.body_text || "(No body text)",
+        });
       });
     }
 
@@ -583,7 +759,7 @@ export async function POST(req: Request) {
 
     const representativeEmlPath = uploadedEmlPaths[0];
     const displayName =
-      parsedRows.length === 1 ? parsedRows[0].file_name : `${parsedRows.length} files`;
+      files.length === 1 ? (files[0] as File).name : `${files.length} files`;
 
     const { data: conversion, error: convErr } = await supabase
       .from("conversions")
@@ -602,7 +778,6 @@ export async function POST(req: Request) {
       return new NextResponse(convErr?.message || "Failed to create conversion.", { status: 500 });
     }
 
-    // Return whichever output user requested (force download behavior)
     if (output === "pdf") {
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
