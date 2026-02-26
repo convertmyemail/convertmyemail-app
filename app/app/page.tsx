@@ -12,7 +12,7 @@ type Conversion = {
   csv_path: string | null;
   pdf_path: string | null;
   sheet_path: string | null; // preferred xlsx, fallback csv
-  message_count?: number | null; // ✅ NEW
+  message_count?: number | null;
 };
 
 export default function UploadPage() {
@@ -78,7 +78,6 @@ export default function UploadPage() {
         throw new Error(msg);
       }
 
-      // Prefer filename from server header
       const disposition = res.headers.get("content-disposition") || "";
       const match = disposition.match(/filename="([^"]+)"/);
       const filename =
@@ -146,7 +145,6 @@ export default function UploadPage() {
       return;
     }
 
-    // ✅ Download immediately without leaving the site
     const blob = await res.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -372,7 +370,7 @@ export default function UploadPage() {
                       <tr className="text-left text-xs text-gray-500">
                         <th className="py-3 pr-3 font-medium">File</th>
                         <th className="py-3 pr-3 font-medium">Converted</th>
-                        <th className="py-3 pr-3 font-medium">Messages</th> {/* ✅ NEW */}
+                        <th className="py-3 pr-3 font-medium">Messages</th>
                         <th className="py-3 pr-3 font-medium">Formats</th>
                         <th className="py-3 text-right font-medium">Download</th>
                       </tr>
@@ -381,6 +379,8 @@ export default function UploadPage() {
                       {history.map((c) => {
                         const sheetKey = `${c.id}:sheet`;
                         const pdfKey = `${c.id}:pdf`;
+                        const count = c.message_count ?? 1;
+                        const isThread = count > 1;
 
                         return (
                           <tr key={c.id} className="align-middle">
@@ -396,10 +396,17 @@ export default function UploadPage() {
                             </td>
 
                             <td className="py-3 pr-3">
-                              <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
-                                {(c.message_count ?? 1).toLocaleString()}{" "}
-                                {(c.message_count ?? 1) === 1 ? "message" : "messages"}
-                              </span>
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isThread && (
+                                  <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-900">
+                                    Thread
+                                  </span>
+                                )}
+
+                                <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                                  {count.toLocaleString()} {count === 1 ? "message" : "messages"}
+                                </span>
+                              </div>
                             </td>
 
                             <td className="py-3 pr-3">
