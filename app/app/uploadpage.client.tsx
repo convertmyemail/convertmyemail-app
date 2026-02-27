@@ -15,6 +15,13 @@ type Conversion = {
   message_count?: number | null;
 };
 
+type Usage = {
+  plan: "Free" | "Pro" | string;
+  used: number;
+  remaining: number | null;
+  free_limit: number;
+};
+
 export default function UploadPageClient({ plan }: { plan: string | null }) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -24,6 +31,10 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
 
   const [files, setFiles] = useState<FileList | null>(null);
   const [status, setStatus] = useState<string>("");
+
+  // Usage / plan (from /api/usage)
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [usageLoading, setUsageLoading] = useState<boolean>(true);
 
   // History
   const [history, setHistory] = useState<Conversion[]>([]);
@@ -38,6 +49,50 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();
+  };
+
+  const loadUsage = async () => {
+    setUsageLoading(true);
+    try {
+      const res = await fetch("/api/usage", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Failed to load usage");
+      setUsage(json as Usage);
+    } catch (e) {
+      // Don't block UI if this fails — just hide usage.
+      console.error("usage load error", e);
+      setUsage(null);
+    } finally {
+      setUsageLoading(false);
+    }
+  };
+
+  const startCheckout = async (priceKey: "starter" | "pro") => {
+    if (checkoutStartedRef.current) return;
+    checkoutStartedRef.current = true;
+
+    try {
+      setStatus("Redirecting to secure checkout…");
+
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priceKey }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Could not start checkout");
+
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+
+      throw new Error("Missing checkout URL");
+    } catch (e: any) {
+      checkoutStartedRef.current = false; // allow retry if it failed
+      setStatus(e?.message || "Checkout error.");
+    }
   };
 
   const loadHistory = async () => {
@@ -109,9 +164,10 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
     }
   };
 
-  // Load history on mount
+  // Load history + usage on mount
   useEffect(() => {
     loadHistory();
+    loadUsage();
   }, []);
 
   // ✅ Auto-start Stripe Checkout if plan is present (passed from server wrapper)
@@ -119,33 +175,9 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
     const planKey = (plan || "").trim().toLowerCase();
     if (planKey !== "starter" && planKey !== "pro") return;
 
-    if (checkoutStartedRef.current) return;
-    checkoutStartedRef.current = true;
-
-    (async () => {
-      try {
-        setStatus("Redirecting to secure checkout…");
-
-        const res = await fetch("/api/stripe/checkout", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priceKey: planKey }),
-        });
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || "Could not start checkout");
-
-        if (data?.url) {
-          window.location.href = data.url;
-          return;
-        }
-
-        throw new Error("Missing checkout URL");
-      } catch (e: any) {
-        checkoutStartedRef.current = false; // allow retry if it failed
-        setStatus(e?.message || "Checkout error.");
-      }
-    })();
+    // This handles the "plan=pro" deep-link behavior you already built.
+    startCheckout(planKey as "starter" | "pro");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan]);
 
   const upload = async (format: "xlsx" | "pdf") => {
@@ -176,9 +208,39 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
       body: formData,
     });
 
+    // Handle free limit block (403) with a friendly message + CTA
     if (!res.ok) {
-      const text = await res.text();
-      setStatus(`Error: ${text}`);
+      let msg = "Conversion failed.";
+      try {
+        const maybeJson = await res.json();
+        if (maybeJson?.error) {
+          // if API returns structured limit response
+          if (res.status === 403 && /limit/i.test(String(maybeJson.error))) {
+            const used = maybeJson?.used;
+            const remaining = maybeJson?.remaining;
+            const freeLimit = maybeJson?.free_limit;
+            msg =
+              `Free limit reached. ` +
+              (typeof used === "number" && typeof freeLimit === "number"
+                ? `You’ve used ${used}/${freeLimit} free conversions. `
+                : "") +
+              `Upgrade to continue.`;
+          } else {
+            msg = maybeJson.error;
+          }
+        } else {
+          msg = JSON.stringify(maybeJson);
+        }
+      } catch {
+        // fallback to text
+        const text = await res.text().catch(() => "");
+        if (text) msg = text;
+      }
+
+      setStatus(`Error: ${msg}`);
+
+      // refresh usage so the counter updates even after a blocked attempt
+      loadUsage();
       return;
     }
 
@@ -193,10 +255,17 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
     window.URL.revokeObjectURL(url);
 
     setStatus(`Done. Converted ${files.length} file(s).`);
+
+    // update UI
     loadHistory();
+    loadUsage();
   };
 
   const selectedCount = files?.length ?? 0;
+
+  const normalizedPlan = String(usage?.plan || "Free").toLowerCase();
+  const isPro = normalizedPlan === "pro" || normalizedPlan === "starter"; // if you call starter paid, treat as paid here
+  const showUsage = usage && !usageLoading;
 
   return (
     <div className="min-h-screen bg-white text-gray-900">
@@ -236,14 +305,55 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
           {/* Topbar */}
           <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/80 backdrop-blur">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-              <div>
-                <div className="text-sm font-semibold">Dashboard</div>
-                <div className="text-xs text-gray-500">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="text-sm font-semibold">Dashboard</div>
+
+                  {/* ✅ Plan badge */}
+                  {showUsage && (
+                    <span
+                      className={[
+                        "inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold border",
+                        isPro
+                          ? "border-green-200 bg-green-50 text-green-800"
+                          : "border-yellow-200 bg-yellow-50 text-yellow-800",
+                      ].join(" ")}
+                      title="Your current plan"
+                    >
+                      {String(usage.plan || "Free")}
+                    </span>
+                  )}
+
+                  {/* ✅ Subtle usage counter */}
+                  {showUsage && !isPro && usage.remaining !== null && (
+                    <span className="text-xs text-gray-500">
+                      {usage.used} used —{" "}
+                      <span className="font-semibold text-gray-800">{usage.remaining} left</span>
+                    </span>
+                  )}
+
+                  {showUsage && isPro && (
+                    <span className="text-xs text-gray-500">Unlimited conversions</span>
+                  )}
+                </div>
+
+                <div className="mt-1 text-xs text-gray-500 truncate">
                   Convert email files into clean records for storage or submission.
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
+                {/* ✅ Upgrade button inside dashboard */}
+                {!isPro && (
+                  <button
+                    className="hidden sm:inline-flex rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black"
+                    onClick={() => startCheckout("pro")}
+                    type="button"
+                  >
+                    Upgrade
+                  </button>
+                )}
+
                 <button
                   className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50 md:hidden"
                   onClick={logout}
@@ -359,7 +469,20 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
 
               {status && (
                 <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">
-                  <p className="text-sm text-gray-700">{status}</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-gray-700">{status}</p>
+
+                    {/* If they hit the limit, show Upgrade CTA right there */}
+                    {!isPro && /limit reached/i.test(status) && (
+                      <button
+                        className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black"
+                        onClick={() => startCheckout("pro")}
+                        type="button"
+                      >
+                        Upgrade
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -478,9 +601,7 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
 
                                 <button
                                   className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                                  onClick={() =>
-                                    c.pdf_path && downloadConversionFile(c.id, "pdf")
-                                  }
+                                  onClick={() => c.pdf_path && downloadConversionFile(c.id, "pdf")}
                                   disabled={!c.pdf_path || downloadingKey === pdfKey}
                                   type="button"
                                 >

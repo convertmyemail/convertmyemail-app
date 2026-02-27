@@ -1,11 +1,11 @@
+// lib/supabaseServer.ts
 import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-type CookieStoreLike = {
-  get: (name: string) => { value?: string } | undefined;
-  set: (args: { name: string; value: string } & Record<string, any>) => void;
-};
+// Works whether cookies() is sync or async in your Next version/types
+type CookieStore = Awaited<ReturnType<typeof cookies>>;
 
-export function createSupabaseServerClient(cookieStore: CookieStoreLike) {
+export function createSupabaseServerClient(cookieStore: CookieStore) {
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -15,10 +15,19 @@ export function createSupabaseServerClient(cookieStore: CookieStoreLike) {
           return cookieStore.get(name)?.value;
         },
         set(name: string, value: string, options: any) {
-          cookieStore.set({ name, value, ...options });
+          // Some contexts provide a readonly cookie store; guard.
+          try {
+            (cookieStore as any).set({ name, value, ...options });
+          } catch {
+            // ignore if not mutable
+          }
         },
         remove(name: string, options: any) {
-          cookieStore.set({ name, value: "", ...options });
+          try {
+            (cookieStore as any).set({ name, value: "", ...options });
+          } catch {
+            // ignore if not mutable
+          }
         },
       },
     }

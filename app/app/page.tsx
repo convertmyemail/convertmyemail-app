@@ -4,7 +4,7 @@ import UploadPageClient from "./uploadpage.client";
 
 export const dynamic = "force-dynamic";
 
-type SP = { plan?: string };
+type SP = { plan?: string | string[] };
 
 export default async function AppPage({
   searchParams,
@@ -12,7 +12,11 @@ export default async function AppPage({
   searchParams?: Promise<SP> | SP;
 }) {
   const sp = (await Promise.resolve(searchParams)) || {};
-  const plan = typeof sp.plan === "string" ? sp.plan : null;
+
+  // handle both string and string[] (Next can sometimes give arrays)
+  const planRaw = sp.plan;
+  const plan =
+    typeof planRaw === "string" ? planRaw : Array.isArray(planRaw) ? planRaw[0] : null;
 
   return (
     <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}>

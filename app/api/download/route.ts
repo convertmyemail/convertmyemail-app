@@ -34,7 +34,7 @@ function parseKind(raw: string | null): Kind | null {
 
 function contentDisposition(filename: string) {
   // filename= is widely supported; filename*=UTF-8'' handles spaces/utf-8 properly.
-  const fallback = filename.replace(/"/g, ""); // keep it simple + safe for quoted string
+  const fallback = filename.replace(/"/g, "");
   const encoded = encodeURIComponent(filename);
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
@@ -49,13 +49,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Missing or invalid id/kind" }, { status: 400 });
   }
 
-  const cookieStore = await Promise.resolve(cookies() as any);
+  // ✅ FIX: cookies() is async in your setup
+  const cookieStore = await cookies();
   const supabase = createSupabaseServerClient(cookieStore);
 
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  const user = userData?.user;
 
   if (userErr || !user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -73,24 +72,24 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const path =
+  const filePath =
     kind === "pdf"
       ? row.pdf_path
       : kind === "xlsx"
-        ? row.xlsx_path
-        : kind === "csv"
-          ? row.csv_path
-          : kind === "sheet"
-            ? row.xlsx_path || row.csv_path
-            : null;
+      ? row.xlsx_path
+      : kind === "csv"
+      ? row.csv_path
+      : kind === "sheet"
+      ? row.xlsx_path || row.csv_path
+      : null;
 
-  if (!path) {
+  if (!filePath) {
     return NextResponse.json({ error: "File not available" }, { status: 404 });
   }
 
   const { data: blob, error: dlErr } = await supabase.storage
     .from("conversions")
-    .download(path);
+    .download(filePath);
 
   if (dlErr || !blob) {
     return NextResponse.json({ error: "Download failed" }, { status: 500 });
@@ -99,7 +98,7 @@ export async function GET(req: Request) {
   const arrayBuffer = await blob.arrayBuffer();
   const bytes = new Uint8Array(arrayBuffer);
 
-  const extFromPath = (path.split(".").pop() || "").toLowerCase();
+  const extFromPath = (filePath.split(".").pop() || "").toLowerCase();
   const ext = kind === "sheet" ? (extFromPath === "csv" ? "csv" : "xlsx") : kind;
 
   const originalBase = safeDownloadName(row.original_filename || "conversion");
@@ -111,6 +110,8 @@ export async function GET(req: Request) {
       "Content-Type": contentTypeFor(ext),
       "Content-Disposition": contentDisposition(filename),
       "Cache-Control": "no-store",
+      Pragma: "no-cache",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

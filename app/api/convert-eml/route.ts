@@ -7,6 +7,74 @@ import ExcelJS from "exceljs";
 
 export const runtime = "nodejs";
 
+const FREE_LIMIT = 3;
+
+async function checkFreeLimit(supabase: any, userId: string) {
+  // 1) If user has an active subscription, allow unlimited
+  const { data: subs, error: subErr } = await supabase
+    .from("subscriptions")
+    .select("id, status, stripe_status")
+    .eq("user_id", userId)
+    .limit(1);
+
+  if (subErr) {
+    console.error("subscription lookup error", subErr);
+    return {
+      ok: false as const,
+      status: 500,
+      body: { error: "Unable to verify subscription" },
+    };
+  }
+
+  const firstSub = subs?.[0];
+  const subStatus = String(firstSub?.status || firstSub?.stripe_status || "").toLowerCase();
+  const hasActiveSub = subStatus === "active";
+
+  if (hasActiveSub) {
+    return { ok: true as const, plan: "Pro" as const };
+  }
+
+  // 2) Free user: count conversions
+  const { data: rows, error: rowsErr } = await supabase
+    .from("conversions")
+    .select("id")
+    .eq("user_id", userId);
+
+  if (rowsErr) {
+    console.error("conversion count error", rowsErr);
+    return {
+      ok: false as const,
+      status: 500,
+      body: { error: "Unable to check usage" },
+    };
+  }
+
+  const used = (rows || []).length;
+  const remaining = Math.max(0, FREE_LIMIT - used);
+
+  if (used >= FREE_LIMIT) {
+    return {
+      ok: false as const,
+      status: 403,
+      body: {
+        error: "Free conversion limit reached",
+        plan: "Free",
+        free_limit: FREE_LIMIT,
+        used,
+        remaining,
+      },
+    };
+  }
+
+  return {
+    ok: true as const,
+    plan: "Free" as const,
+    free_limit: FREE_LIMIT,
+    used,
+    remaining,
+  };
+}
+
 function safeFileName(name: string) {
   return (name || "upload.eml")
     .replace(/[^\w.\-()]+/g, "_")
@@ -196,6 +264,7 @@ async function rowsToPdfBuffer(
     body_text: string;
   }>
 ): Promise<Buffer> {
+  // --- your existing implementation unchanged (kept as-is) ---
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -490,6 +559,7 @@ async function rowsToXlsxBuffer(
     body_text: string;
   }>
 ): Promise<Buffer> {
+  // --- your existing implementation unchanged (kept as-is) ---
   const wb = new ExcelJS.Workbook();
   wb.creator = "ConvertMyEmail";
   wb.created = new Date();
@@ -515,12 +585,12 @@ async function rowsToXlsxBuffer(
       key === "body_text"
         ? 80
         : key === "subject"
-          ? 45
-          : key === "from" || key === "to"
-            ? 34
-            : key === "date"
-              ? 24
-              : 28,
+        ? 45
+        : key === "from" || key === "to"
+        ? 34
+        : key === "date"
+        ? 24
+        : 28,
   }));
 
   const headerRow = ws.getRow(1);
@@ -598,7 +668,7 @@ export async function POST(req: Request) {
     const url = new URL(req.url);
     const output = (url.searchParams.get("output") || "xlsx") as "xlsx" | "pdf";
 
-    const cookieStore = await Promise.resolve(cookies() as any);
+    const cookieStore = await cookies(); // ✅ FIX
     const supabase = createSupabaseServerClient(cookieStore);
 
     const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -607,6 +677,12 @@ export async function POST(req: Request) {
     }
 
     const userId = userData.user.id;
+
+    // ✅ ENFORCE FREE LIMIT (3 conversions)
+    const gate = await checkFreeLimit(supabase, userId);
+    if (!gate.ok) {
+      return NextResponse.json(gate.body, { status: gate.status });
+    }
 
     const formData = await req.formData();
     const files = formData.getAll("files");
@@ -653,12 +729,16 @@ export async function POST(req: Request) {
 
       const topFrom =
         parsed.from?.text?.toString() ||
-        (parsed.from as any)?.value?.map((v: { address?: string }) => v.address ?? "").join(", ") ||
+        (parsed.from as any)?.value
+          ?.map((v: { address?: string }) => v.address ?? "")
+          .join(", ") ||
         "";
 
       const topTo =
         parsed.to?.text?.toString() ||
-        (parsed.to as any)?.value?.map((v: { address?: string }) => v.address ?? "").join(", ") ||
+        (parsed.to as any)?.value
+          ?.map((v: { address?: string }) => v.address ?? "")
+          .join(", ") ||
         "";
 
       const topSubject = parsed.subject || "";
@@ -730,7 +810,7 @@ export async function POST(req: Request) {
         xlsx_path: xlsxPath,
         pdf_path: pdfPath,
         csv_path: null,
-        message_count: parsedRows.length, // ✅ NEW
+        message_count: parsedRows.length,
       })
       .select("id")
       .single();
