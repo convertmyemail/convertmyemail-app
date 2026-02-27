@@ -189,17 +189,20 @@ export default async function MarketingHome({
 
         <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-gray-200 pt-6 text-xs text-gray-500 md:flex-row md:items-center">
           <div>© {new Date().getFullYear()} Convert My Email</div>
-          <div className="flex gap-4">
-            <Link href={loginHref} className="hover:text-gray-700">
-              Sign in
-            </Link>
-            <Link href="/how-it-works" className="hover:text-gray-700">
-              How it works
-            </Link>
-            <Link href="/pricing" className="hover:text-gray-700">
-              Pricing
-            </Link>
-          </div>
+          <div className="flex flex-wrap gap-4">
+  <Link href={loginHref} className="hover:text-gray-700">
+    Sign in
+  </Link>
+  <Link href="/how-it-works" className="hover:text-gray-700">
+    How it works
+  </Link>
+  <Link href="/how-to-save-eml" className="hover:text-gray-700">
+    Save to .eml
+  </Link>
+  <Link href="/pricing" className="hover:text-gray-700">
+    Pricing
+  </Link>
+</div>
         </footer>
       </section>
     </main>
