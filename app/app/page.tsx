@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../lib/supabase/browser";
 
 type Conversion = {
@@ -17,6 +17,7 @@ type Conversion = {
 
 export default function UploadPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [files, setFiles] = useState<FileList | null>(null);
@@ -107,9 +108,40 @@ export default function UploadPage() {
     }
   };
 
+  // Load history on mount
   useEffect(() => {
     loadHistory();
   }, []);
+
+  // ✅ Auto-start Stripe Checkout if plan is present in query string
+  useEffect(() => {
+    const plan = searchParams.get("plan"); // "starter" | "pro" | null
+    if (plan !== "starter" && plan !== "pro") return;
+
+    (async () => {
+      try {
+        setStatus("Redirecting to secure checkout…");
+
+        const res = await fetch("/api/stripe/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ priceKey: plan }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || "Could not start checkout");
+
+        if (data?.url) {
+          window.location.href = data.url;
+          return;
+        }
+
+        throw new Error("Missing checkout URL");
+      } catch (e: any) {
+        setStatus(e?.message || "Checkout error.");
+      }
+    })();
+  }, [searchParams]);
 
   const upload = async (format: "xlsx" | "pdf") => {
     if (!files || files.length === 0) {

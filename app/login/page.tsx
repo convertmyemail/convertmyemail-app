@@ -15,6 +15,9 @@ function cleanBaseUrl(url: string) {
   return (url || "").trim().replace(/\/$/, "");
 }
 
+const COOLDOWN_SECONDS = 60;
+const COOLDOWN_KEY = "cme_magiclink_cooldown_until";
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -22,6 +25,10 @@ export default function LoginPage() {
   const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [nextPath, setNextPath] = useState("/app");
+
+  // Cooldown state
+  const [cooldownUntil, setCooldownUntil] = useState<number>(0);
+  const [now, setNow] = useState<number>(Date.now());
 
   // ✅ Canonical base URL for magic-link callbacks (fixes PKCE host mismatch)
   const baseUrl = useMemo(() => {
@@ -56,8 +63,44 @@ export default function LoginPage() {
     });
   }, [router, nextPath]);
 
+  // Load cooldown from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(COOLDOWN_KEY);
+      const until = raw ? Number(raw) : 0;
+      if (Number.isFinite(until)) setCooldownUntil(until);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Tick for countdown display (keeps UI updated)
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const secondsLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  const isCooldownActive = secondsLeft > 0;
+
+  const startCooldown = (seconds: number) => {
+    const until = Date.now() + seconds * 1000;
+    setCooldownUntil(until);
+    try {
+      localStorage.setItem(COOLDOWN_KEY, String(until));
+    } catch {
+      // ignore
+    }
+  };
+
   const sendMagicLink = async () => {
     setStatus("");
+
+    if (isCooldownActive) {
+      setStatus(`Please wait ${secondsLeft}s before requesting another link.`);
+      return;
+    }
+
     const trimmed = email.trim();
 
     if (!trimmed) {
@@ -82,8 +125,15 @@ export default function LoginPage() {
       if (error) throw error;
 
       setStatus("Magic link sent. Check your email to sign in.");
+      startCooldown(COOLDOWN_SECONDS);
     } catch (e: any) {
-      setStatus(e?.message || "Failed to send magic link.");
+      const msg = e?.message || "Failed to send magic link.";
+      setStatus(msg);
+
+      // If something rate-limit-ish happens, back off a bit longer
+      if (/rate limit|too many|429/i.test(msg)) {
+        startCooldown(120);
+      }
     } finally {
       setLoading(false);
     }
@@ -129,12 +179,14 @@ export default function LoginPage() {
               </div>
 
               <p className="text-xs text-gray-500">
-                Redirect after login: <span className="font-medium text-gray-700">{nextPath}</span>
+                Redirect after login:{" "}
+                <span className="font-medium text-gray-700">{nextPath}</span>
               </p>
 
               {/* Optional: helpful debug line (remove anytime) */}
               <p className="text-[10px] text-gray-400">
-                Callback base: <span className="font-medium">{baseUrl || "(window origin)"}</span>
+                Callback base:{" "}
+                <span className="font-medium">{baseUrl || "(window origin)"}</span>
               </p>
             </div>
           </div>
@@ -158,17 +210,28 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 inputMode="email"
                 autoComplete="email"
+                disabled={loading}
               />
             </div>
 
             <button
               className="mt-4 w-full rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
               onClick={sendMagicLink}
-              disabled={loading}
+              disabled={loading || isCooldownActive}
               type="button"
             >
-              {loading ? "Sending…" : "Send magic link"}
+              {loading
+                ? "Sending…"
+                : isCooldownActive
+                ? `Resend in ${secondsLeft}s`
+                : "Send magic link"}
             </button>
+
+            {isCooldownActive && !loading && (
+              <p className="mt-2 text-xs text-gray-500">
+                Please wait for the timer before requesting another link.
+              </p>
+            )}
 
             {status && (
               <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">

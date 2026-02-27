@@ -1,8 +1,6 @@
 // app/page.tsx
-import HowToSaveEml from "@/app/components/HowToSaveEml";
-import PricingSection from "@/app/components/PricingSection";
-import MobileMenu from "@/app/components/MobileMenu";
 import Link from "next/link";
+import SiteHeader from "@/app/components/siteheader";
 
 type SP = { next?: string };
 
@@ -17,43 +15,11 @@ export default async function MarketingHome({
 
   return (
     <main className="min-h-screen bg-white text-gray-900">
-      {/* Top bar */}
-      <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <Link href="/" className="font-semibold tracking-tight">
-            Convert My Email
-          </Link>
-
-          {/* Desktop nav */}
-          <nav className="hidden items-center gap-3 md:flex">
-            <Link href="#how" className="text-sm text-gray-600 hover:text-gray-900">
-              How it works
-            </Link>
-            <Link href="#how-to-eml" className="text-sm text-gray-600 hover:text-gray-900">
-              Save .eml
-            </Link>
-            <Link href="#pricing" className="text-sm text-gray-600 hover:text-gray-900">
-              Pricing
-            </Link>
-            <Link href="#who" className="text-sm text-gray-600 hover:text-gray-900">
-              Who it’s for
-            </Link>
-
-            <Link
-              href={loginHref}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50"
-            >
-              Sign in
-            </Link>
-          </nav>
-
-          {/* Mobile nav */}
-          <MobileMenu loginHref={loginHref} />
-        </div>
-      </header>
+      {/* Global header (Home + top navigation) */}
+      <SiteHeader variant="marketing" />
 
       {/* Hero */}
-      <section className="mx-auto max-w-6xl px-6 pt-14 pb-10 md:pt-20">
+      <section className="mx-auto max-w-6xl px-6 pt-14 pb-12 md:pt-20">
         <div className="grid gap-10 md:grid-cols-2 md:items-center">
           <div>
             <p className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
@@ -61,12 +27,12 @@ export default async function MarketingHome({
             </p>
 
             <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">
-              Convert Email Files to Clean Records or Court-Ready Documents
+              Convert Email Files to Clean Records
             </h1>
 
             <p className="mt-4 text-base leading-7 text-gray-600 md:text-lg">
-              Upload .eml files. Extract structured data. Download formatted Excel or
-              professional PDFs — ready for storage, filing, or submission.
+              Upload .eml files. Extract structured data. Download formatted Excel or professional
+              PDFs — ready for storage, filing, or submission.
             </p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -77,10 +43,10 @@ export default async function MarketingHome({
                 Upload a file
               </Link>
               <Link
-                href="#sample"
+                href="/how-it-works"
                 className="inline-flex items-center justify-center rounded-xl border border-gray-300 px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50"
               >
-                View sample output
+                How it works
               </Link>
             </div>
 
@@ -168,44 +134,33 @@ export default async function MarketingHome({
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="mx-auto max-w-6xl px-6 py-14" id="how">
-        <h2 className="text-2xl font-semibold tracking-tight">How it works</h2>
+      {/* Simple “Explore” section replaces the busy in-page sections */}
+      <section className="mx-auto max-w-6xl px-6 py-14">
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Everything you need, clearly explained
+        </h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600">
-          A straightforward process that produces consistent, professional output.
+          We moved details into dedicated pages so the homepage stays fast and focused.
         </p>
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
-          <Step n="01" title="Upload your .eml file" text="Drag and drop or select your email file." />
-          <Step n="02" title="We extract structured data" text="Sender, recipient, date, subject, body, and more." />
-          <Step n="03" title="Download Excel or PDF" text="Ready for storage, filing, or submission." />
+          <ExploreCard
+            href="/how-it-works"
+            title="How it works"
+            text="Upload an .eml → we extract the thread → download Excel & PDF."
+          />
+          <ExploreCard
+            href="/how-to-save-eml"
+            title="How to save an .eml file"
+            text="Quick steps for Gmail, Outlook, Apple Mail, and more."
+          />
+          <ExploreCard
+            href="/pricing"
+            title="Pricing"
+            text="Start free, upgrade when you need unlimited conversions."
+          />
         </div>
       </section>
-
-      {/* How to save .eml */}
-      <div id="how-to-eml">
-        <HowToSaveEml />
-      </div>
-
-      {/* Who it's for */}
-      <section className="mx-auto max-w-6xl px-6 pb-14" id="who">
-        <div className="rounded-2xl border border-gray-200 bg-white p-8">
-          <h2 className="text-2xl font-semibold tracking-tight">Built for professionals</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600">
-            Convert email records into clean, standardized documents for downstream workflows.
-          </p>
-
-          <div className="mt-6 grid gap-3 md:grid-cols-2">
-            <Audience title="Accountants" text="Organize client communications and supporting documentation." />
-            <Audience title="Law firms" text="Prepare evidence and standardize email records." />
-            <Audience title="Courts" text="Create consistent submissions and review-friendly documents." />
-            <Audience title="Compliance & audit teams" text="Maintain structured records for review and retention." />
-          </div>
-        </div>
-      </section>
-
-      {/* Pricing */}
-      <PricingSection loginHref={loginHref} />
 
       {/* CTA */}
       <section className="mx-auto max-w-6xl px-6 pb-20">
@@ -224,10 +179,10 @@ export default async function MarketingHome({
               Upload a file
             </Link>
             <Link
-              href={loginHref}
+              href="/pricing"
               className="inline-flex items-center justify-center rounded-xl border border-white/30 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10"
             >
-              Sign in
+              View pricing
             </Link>
           </div>
         </div>
@@ -235,15 +190,15 @@ export default async function MarketingHome({
         <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-gray-200 pt-6 text-xs text-gray-500 md:flex-row md:items-center">
           <div>© {new Date().getFullYear()} Convert My Email</div>
           <div className="flex gap-4">
-            <Link href="/login" className="hover:text-gray-700">
-              Login
+            <Link href={loginHref} className="hover:text-gray-700">
+              Sign in
             </Link>
-            <a href="#" className="hover:text-gray-700">
-              Privacy
-            </a>
-            <a href="#" className="hover:text-gray-700">
-              Terms
-            </a>
+            <Link href="/how-it-works" className="hover:text-gray-700">
+              How it works
+            </Link>
+            <Link href="/pricing" className="hover:text-gray-700">
+              Pricing
+            </Link>
           </div>
         </footer>
       </section>
@@ -269,21 +224,25 @@ function Proof({ title, text }: { title: string; text: string }) {
   );
 }
 
-function Step({ n, title, text }: { n: string; title: string; text: string }) {
+function ExploreCard({
+  href,
+  title,
+  text,
+}: {
+  href: string;
+  title: string;
+  text: string;
+}) {
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-      <div className="text-xs font-semibold text-gray-500">{n}</div>
-      <div className="mt-2 text-sm font-semibold text-gray-900">{title}</div>
-      <div className="mt-2 text-sm leading-6 text-gray-600">{text}</div>
-    </div>
-  );
-}
-
-function Audience({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-5">
+    <Link
+      href={href}
+      className="group rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition hover:border-gray-300 hover:shadow"
+    >
       <div className="text-sm font-semibold text-gray-900">{title}</div>
-      <div className="mt-1 text-sm leading-6 text-gray-600">{text}</div>
-    </div>
+      <div className="mt-2 text-sm leading-6 text-gray-600">{text}</div>
+      <div className="mt-4 text-sm font-semibold text-gray-900">
+        Learn more <span className="transition group-hover:translate-x-0.5">→</span>
+      </div>
+    </Link>
   );
 }
