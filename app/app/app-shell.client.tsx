@@ -10,6 +10,10 @@ type Usage = {
   used: number;
   remaining: number | null;
   free_limit: number;
+  // optional fields some endpoints may return
+  limit?: number;
+  status?: string;
+  isPaid?: boolean;
 };
 
 type AppShellCtx = {
@@ -48,12 +52,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [usageLoading, setUsageLoading] = useState(true);
 
+  // ✅ Helper: get Authorization header if we have a session (works even if cookies are flaky)
+  const getAuthHeaders = async (): Promise<Record<string, string> | undefined> => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) return undefined;
+    return { Authorization: `Bearer ${session.access_token}` };
+  };
+
   const refreshUsage = async () => {
     setUsageLoading(true);
     try {
-      const res = await fetch("/api/usage", { cache: "no-store" });
+      const authHeaders = await getAuthHeaders();
+
+      const res = await fetch("/api/usage", {
+        cache: "no-store",
+        headers: authHeaders,
+      });
+
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Failed to load usage");
+
       setUsage(json as Usage);
     } catch (e) {
       console.error("usage load error", e);
@@ -90,9 +111,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     checkoutStartedRef.current = true;
 
     try {
+      const authHeaders = await getAuthHeaders();
+
       const res = await fetch("/api/stripe/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(authHeaders ?? {}),
+        },
         body: JSON.stringify({ priceKey }),
       });
 
@@ -156,11 +182,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
             <nav className="px-3 space-y-1">
               {NAV.map((item) => (
-                <SidebarItem
-                  key={item.href}
-                  href={item.href}
-                  active={activeHref === item.href}
-                >
+                <SidebarItem key={item.href} href={item.href} active={activeHref === item.href}>
                   {item.label}
                 </SidebarItem>
               ))}
@@ -299,9 +321,7 @@ function SidebarItem({
       aria-current={active ? "page" : undefined}
       className={[
         "flex items-center rounded-xl px-3 py-2 text-sm font-medium transition",
-        active
-          ? "bg-gray-900 text-white"
-          : "text-gray-700 hover:bg-gray-50 hover:text-gray-900",
+        active ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-50 hover:text-gray-900",
       ].join(" ")}
     >
       {children}

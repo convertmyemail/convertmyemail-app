@@ -1,50 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-type UsageResp = {
-  plan: "Free" | "Pro";
-  used: number;
-  remaining: number | null;
-  free_limit: number;
-};
+import Link from "next/link";
+import { useAppShell } from "../app/app-shell.client";
 
 export default function PlanBadge() {
-  const [data, setData] = useState<UsageResp | null>(null);
+  const { usage, usageLoading, isPro } = useAppShell();
 
-  useEffect(() => {
-    let mounted = true;
-    fetch("/api/usage")
-      .then((r) => r.json())
-      .then((d) => {
-        if (mounted && !d?.error) setData(d);
-      })
-      .catch((e) => console.error("usage fetch error", e));
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const showUsage = !!usage && !usageLoading;
 
-  if (!data) return null;
+  if (!showUsage) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-700">
+        …
+      </span>
+    );
+  }
 
-  const isFree = data.plan === "Free";
+  const plan = String(usage?.plan || "Free");
+  const remaining = usage?.remaining;
 
   return (
-    <div className="flex items-center gap-3">
+    <Link
+      href="/app/billing"
+      title="View billing & plan"
+      className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-900 hover:bg-gray-50"
+    >
       <span
-        className={`px-2 py-1 text-xs font-semibold rounded-full ${
-          isFree ? "bg-yellow-100 text-yellow-800" : "bg-green-100 text-green-800"
-        }`}
+        className={[
+          "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold border",
+          isPro
+            ? "border-green-200 bg-green-50 text-green-800"
+            : "border-yellow-200 bg-yellow-50 text-yellow-800",
+        ].join(" ")}
       >
-        {data.plan}
+        {plan.toUpperCase()}
       </span>
 
-      {isFree && (
-        <div className="text-xs text-slate-500">
-          <span className="font-medium">{data.used}</span>
-          <span className="ml-1 text-[11px]">/ {data.free_limit} free</span>
-        </div>
+      {!isPro && typeof remaining === "number" && (
+        <span className="text-xs text-gray-700">
+          {remaining} left
+        </span>
       )}
-    </div>
+
+      {isPro && <span className="text-xs text-gray-500">Unlimited</span>}
+    </Link>
   );
 }
