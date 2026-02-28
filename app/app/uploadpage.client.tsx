@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/browser";
 import { useAppShell } from "./app-shell.client";
 
+const FREE_LIMIT_FALLBACK = 3;
+
 type Conversion = {
   id: string;
   original_filename: string | null;
@@ -15,13 +17,76 @@ type Conversion = {
   message_count?: number | null;
 };
 
-export default function UploadPageClient({ plan }: { plan: string | null }) {
+type UsageInfo =
+  | {
+      plan: "Pro";
+      isPaid: true;
+      used: number | null;
+      remaining: null;
+      limit: null;
+      status: string;
+    }
+  | {
+      plan: "Free";
+      isPaid: false;
+      used: number;
+      remaining: number;
+      limit: number;
+      status: "free";
+    };
+
+type LimitModalState = {
+  open: boolean;
+  used?: number;
+  limit?: number;
+  message?: string;
+};
+
+export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const { usage, usageLoading, isPro, refreshUsage, startCheckout } = useAppShell();
+  // App shell (client-side usage + checkout helpers)
+  const { usage: shellUsage, usageLoading, isPro, refreshUsage, startCheckout } = useAppShell();
+
+  // Prefer freshest usage from shell once it loads; fallback to server-passed usage
+  const effectiveUsage = shellUsage ?? usage;
+
+  // Normalize usage fields (app shell type vs server type)
+  const usageUsed =
+    (effectiveUsage as any)?.used ??
+    (effectiveUsage as any)?.usage_used ??
+    (effectiveUsage as any)?.used_count ??
+    0;
+
+  const usageRemaining =
+    (effectiveUsage as any)?.remaining ??
+    (effectiveUsage as any)?.usage_remaining ??
+    (effectiveUsage as any)?.remaining_count ??
+    0;
+
+  const usageLimit =
+    (effectiveUsage as any)?.limit ??
+    (effectiveUsage as any)?.free_limit ??
+    (effectiveUsage as any)?.freeLimit ??
+    FREE_LIMIT_FALLBACK;
 
   const [files, setFiles] = useState<FileList | null>(null);
   const [status, setStatus] = useState<string>("");
+
+  // Upgrade modal
+  const [limitModal, setLimitModal] = useState<LimitModalState>({ open: false });
+
+  const openLimitModal = (opts?: Partial<LimitModalState>) => {
+    setLimitModal({
+      open: true,
+      used: opts?.used ?? usageUsed,
+      limit: opts?.limit ?? usageLimit,
+      message:
+        opts?.message ?? "You’ve reached the free plan limit. Upgrade to Pro to keep converting.",
+    });
+  };
+
+  const closeLimitModal = () => setLimitModal({ open: false });
 
   // History
   const [history, setHistory] = useState<Conversion[]>([]);
@@ -106,13 +171,23 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-start checkout on /app?plan=pro deep-link
+  // Auto-start checkout on /app?plan=pro (deep-link)
   useEffect(() => {
-    const planKey = (plan || "").trim().toLowerCase();
+    const sp = new URLSearchParams(window.location.search);
+    const planKey = (sp.get("plan") || "").trim().toLowerCase();
     if (planKey !== "starter" && planKey !== "pro") return;
     startCheckout(planKey as "starter" | "pro");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan]);
+  }, []);
+
+  // Close modal with Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeLimitModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const upload = async (format: "xlsx" | "pdf") => {
     if (!files || files.length === 0) {
@@ -144,21 +219,41 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
 
     if (!res.ok) {
       let msg = "Conversion failed.";
+      let usedFromServer: number | undefined;
+      let limitFromServer: number | undefined;
+
       try {
         const maybeJson = await res.json();
-        if (maybeJson?.error) {
-          if (res.status === 403 && /limit/i.test(String(maybeJson.error))) {
-            const used = maybeJson?.used;
-            const freeLimit = maybeJson?.free_limit;
-            msg =
-              `Free limit reached. ` +
-              (typeof used === "number" && typeof freeLimit === "number"
-                ? `You’ve used ${used}/${freeLimit} free conversions. `
-                : "") +
-              `Upgrade to continue.`;
-          } else {
-            msg = maybeJson.error;
-          }
+
+        // 402 + FREE_LIMIT_REACHED => open modal
+        const isLimit =
+          res.status === 402 &&
+          (maybeJson?.code === "FREE_LIMIT_REACHED" ||
+            /limit/i.test(String(maybeJson?.error || "")));
+
+        if (isLimit) {
+          usedFromServer = typeof maybeJson?.used === "number" ? maybeJson.used : undefined;
+          limitFromServer =
+            typeof maybeJson?.free_limit === "number"
+              ? maybeJson.free_limit
+              : typeof maybeJson?.limit === "number"
+              ? maybeJson.limit
+              : undefined;
+
+          openLimitModal({
+            used: usedFromServer,
+            limit: limitFromServer,
+            message: maybeJson?.message || maybeJson?.error,
+          });
+
+          msg =
+            `Free limit reached. ` +
+            (typeof usedFromServer === "number" && typeof limitFromServer === "number"
+              ? `You’ve used ${usedFromServer}/${limitFromServer} free conversions. `
+              : "") +
+            `Upgrade to continue.`;
+        } else if (maybeJson?.error) {
+          msg = maybeJson.error;
         } else {
           msg = JSON.stringify(maybeJson);
         }
@@ -187,16 +282,120 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
     await Promise.all([loadHistory(), refreshUsage()]);
   };
 
-  const showUsage = !!usage && !usageLoading;
-  const limitHit = !isPro && typeof usage?.remaining === "number" && usage.remaining <= 0;
+  const showUsage = !!effectiveUsage && !usageLoading;
+  const limitHit = !isPro && typeof usageRemaining === "number" && usageRemaining <= 0;
 
   return (
     <>
+      {/* Upgrade Modal */}
+      {limitModal.open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Upgrade required"
+        >
+          <button
+            className="absolute inset-0 bg-black/40"
+            onClick={closeLimitModal}
+            aria-label="Close modal"
+            type="button"
+          />
+
+          <div className="relative w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-gray-900">Upgrade to keep converting</div>
+                <div className="mt-1 text-sm text-gray-600">
+                  {limitModal.message ||
+                    "You’ve reached the free plan limit. Upgrade to Pro to keep converting."}
+                </div>
+              </div>
+
+              <button
+                className="rounded-xl border border-gray-200 bg-white px-2 py-1 text-sm text-gray-700 hover:bg-gray-50"
+                onClick={closeLimitModal}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="text-sm text-gray-700">
+                Free usage:{" "}
+                <span className="font-semibold">
+                  {typeof limitModal.used === "number" ? limitModal.used : usageUsed} /{" "}
+                  {typeof limitModal.limit === "number" ? limitModal.limit : usageLimit}
+                </span>
+              </div>
+              <div className="mt-3 h-2 w-full overflow-hidden rounded-full border border-gray-200 bg-white">
+                <div
+                  className="h-full bg-gray-900"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      Math.round(
+                        (((typeof limitModal.used === "number" ? limitModal.used : usageUsed) as number) /
+                          Math.max(
+                            1,
+                            (typeof limitModal.limit === "number"
+                              ? limitModal.limit
+                              : usageLimit) as number
+                          )) *
+                          100
+                      )
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-medium hover:bg-gray-50"
+                onClick={closeLimitModal}
+                type="button"
+              >
+                Not now
+              </button>
+
+              <button
+                className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                onClick={() => startCheckout("pro")}
+                type="button"
+              >
+                Upgrade to Pro
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Upload card */}
       <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h1 className="text-lg font-semibold">Upload email files</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-semibold">Upload email files</h1>
+
+              <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-medium text-gray-900">
+                {usageLoading ? "…" : isPro ? "PRO" : "FREE"}
+              </span>
+
+              {!usageLoading && !isPro && showUsage && usageRemaining !== null && (
+                <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700">
+                  {usageRemaining} / {usageLimit} left
+                </span>
+              )}
+
+              {!usageLoading && isPro && (
+                <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700">
+                  Unlimited
+                </span>
+              )}
+            </div>
+
             <p className="mt-1 text-sm text-gray-600">
               Select one or more <span className="font-medium">.eml</span> files. We’ll extract
               structured fields and generate downloadable records.
@@ -212,36 +411,50 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
               Choose files
             </button>
 
+            {/* ✅ If limitHit, open modal instead of disabling */}
             <button
               className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-              onClick={() => upload("xlsx")}
-              disabled={!files || files.length === 0 || limitHit}
+              onClick={() => {
+                if (limitHit) {
+                  openLimitModal();
+                  return;
+                }
+                upload("xlsx");
+              }}
+              disabled={!files || files.length === 0}
               type="button"
-              title={limitHit ? "Free limit reached. Upgrade to continue." : undefined}
+              title={limitHit ? "Free limit reached. Click to upgrade." : undefined}
             >
               Convert to Excel
             </button>
 
+            {/* ✅ If limitHit, open modal instead of disabling */}
             <button
               className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-              onClick={() => upload("pdf")}
-              disabled={!files || files.length === 0 || limitHit}
+              onClick={() => {
+                if (limitHit) {
+                  openLimitModal();
+                  return;
+                }
+                upload("pdf");
+              }}
+              disabled={!files || files.length === 0}
               type="button"
-              title={limitHit ? "Free limit reached. Upgrade to continue." : undefined}
+              title={limitHit ? "Free limit reached. Click to upgrade." : undefined}
             >
               Convert to PDF
             </button>
           </div>
         </div>
 
-        {!isPro && showUsage && usage?.remaining !== null && (
+        {!isPro && showUsage && usageRemaining !== null && (
           <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-medium text-gray-900">Free plan usage</div>
                 <div className="mt-1 text-sm text-gray-600">
-                  {usage.used} of {usage.free_limit} conversions used{" "}
-                  <span className="font-medium">({usage.remaining} left)</span>
+                  {usageUsed} of {usageLimit} conversions used{" "}
+                  <span className="font-medium">({usageRemaining} left)</span>
                 </div>
               </div>
 
@@ -260,7 +473,7 @@ export default function UploadPageClient({ plan }: { plan: string | null }) {
                 style={{
                   width: `${Math.min(
                     100,
-                    Math.round((usage.used / Math.max(1, usage.free_limit)) * 100)
+                    Math.round((usageUsed / Math.max(1, usageLimit)) * 100)
                   )}%`,
                 }}
               />
