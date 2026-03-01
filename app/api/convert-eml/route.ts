@@ -1,20 +1,56 @@
 import { NextResponse } from "next/server";
 import { simpleParser } from "mailparser";
-import { createSupabaseServerClient } from "@/lib/supabaseServer";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { createClient } from "@supabase/supabase-js";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import ExcelJS from "exceljs";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const FREE_LIMIT = 3;
+
+function createSupabaseWithAuth(req: Request) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+  const authHeader = req.headers.get("authorization") || "";
+
+  return createClient(url, anon, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: {
+      headers: authHeader ? { Authorization: authHeader } : {},
+    },
+  });
+}
+
+function asDate(value: any): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+
+  if (typeof value === "string") {
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  if (typeof value === "number") {
+    const ms = value > 1e12 ? value : value * 1000;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
+}
 
 async function checkFreeLimit(supabase: any, userId: string) {
   // 1) Check latest subscription
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
-    .select("status, stripe_status, created_at")
+    .select("status, plan, current_period_end, updated_at")
     .eq("user_id", userId)
-    .order("created_at", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -23,18 +59,25 @@ async function checkFreeLimit(supabase: any, userId: string) {
     return {
       ok: false as const,
       status: 500,
-      body: { error: "Unable to verify subscription" },
+      body: {
+        error: "Unable to verify subscription",
+        message: "We couldn’t verify your subscription status. Please try again.",
+      },
     };
   }
 
-  const subStatus = String(sub?.status || sub?.stripe_status || "").toLowerCase();
-  const hasPaidAccess = subStatus === "active" || subStatus === "trialing";
+  const subStatus = String(sub?.status || "").toLowerCase();
+  const active = subStatus === "active" || subStatus === "trialing";
 
-  if (hasPaidAccess) {
+  // Fail-open on missing period end if status is active/trialing
+  const periodEnd = asDate((sub as any)?.current_period_end);
+  const notExpired = !periodEnd || periodEnd.getTime() > Date.now();
+
+  if (active && notExpired) {
     return { ok: true as const, plan: "Pro" as const };
   }
 
-  // 2) Count conversions efficiently
+  // 2) Count conversions efficiently for free users
   const { count, error: countErr } = await supabase
     .from("conversions")
     .select("id", { count: "exact", head: true })
@@ -77,17 +120,6 @@ async function checkFreeLimit(supabase: any, userId: string) {
   };
 }
 
-function safeFileName(name: string) {
-  return (name || "upload.eml")
-    .replace(/[^\w.\-()]+/g, "_")
-    .replace(/_+/g, "_")
-    .slice(0, 140);
-}
-
-function titleCaseHeader(key: string) {
-  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function normalizeBody(text: string) {
   return (text || "")
     .replace(/\r\n/g, "\n")
@@ -97,51 +129,42 @@ function normalizeBody(text: string) {
     .trim();
 }
 
-function stripQuotePrefix(s: string) {
-  return s
-    .split("\n")
-    .map((line) => line.replace(/^\s*>+\s?/, ""))
-    .join("\n");
-}
-
-type ThreadMessage = {
-  from: string;
-  to: string;
-  subject: string;
-  date: string;
-  body_text: string;
-};
-
-function extractThreadMessages(
-  fullText: string,
-  fallback: Omit<ThreadMessage, "body_text">
-) {
-  const text = normalizeBody(fullText);
-  if (!text) return [];
-
-  return [
-    {
-      ...fallback,
-      body_text: normalizeBody(stripQuotePrefix(text)) || "(No body text)",
-    },
-  ];
-}
-
 async function rowsToPdfBuffer(rows: any[]): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
-  const page = pdfDoc.addPage();
-  const { width, height } = page.getSize();
+  const fontSizeTitle = 16;
+  const fontSize = 11;
+  const marginX = 50;
+  const marginTop = 50;
+  const marginBottom = 60;
+  const lineHeight = 16;
 
-  page.drawText("Email Export", { x: 50, y: height - 50, size: 16, font });
+  let page = pdfDoc.addPage();
+  let { height } = page.getSize();
 
-  let y = height - 80;
+  const newPage = () => {
+    page = pdfDoc.addPage();
+    ({ height } = page.getSize());
+    y = height - marginTop;
+  };
 
-  rows.forEach((r, i) => {
-    page.drawText(`Email ${i + 1}: ${r.subject}`, { x: 50, y, size: 12, font });
-    y -= 20;
-  });
+  // Title on first page
+  page.drawText("Email Export", { x: marginX, y: height - marginTop, size: fontSizeTitle, font });
+  let y = height - marginTop - 30;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const subject = String(r.subject || "(No subject)").replace(/\s+/g, " ").slice(0, 140);
+
+    // Start new page if needed
+    if (y < marginBottom) {
+      newPage();
+    }
+
+    page.drawText(`Email ${i + 1}: ${subject}`, { x: marginX, y, size: fontSize, font });
+    y -= lineHeight;
+  }
 
   const bytes = await pdfDoc.save();
   return Buffer.from(bytes);
@@ -160,6 +183,9 @@ async function rowsToXlsxBuffer(rows: any[]): Promise<Buffer> {
     { header: "Body", key: "body_text", width: 80 },
   ];
 
+  ws.getRow(1).font = { bold: true };
+  ws.getRow(1).alignment = { vertical: "middle" };
+
   rows.forEach((r) => ws.addRow(r));
 
   const buf = await wb.xlsx.writeBuffer();
@@ -171,16 +197,24 @@ export async function POST(req: Request) {
     const url = new URL(req.url);
     const output = (url.searchParams.get("output") || "xlsx") as "xlsx" | "pdf";
 
-    const supabase = createSupabaseServerClient();
-
-    const { data: userData, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !userData?.user) {
-      return new NextResponse("Unauthorized. Please log in.", { status: 401 });
+    // Require bearer auth (your client sends it)
+    const authHeader = req.headers.get("authorization") || "";
+    if (!authHeader.toLowerCase().startsWith("bearer ")) {
+      return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
     }
 
-    const userId = userData.user.id;
+    const supabase = createSupabaseWithAuth(req);
 
-    const gate = await checkFreeLimit(supabase, userId);
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
+    }
+
+    const gate = await checkFreeLimit(supabase, user.id);
     if (!gate.ok) {
       return NextResponse.json(gate.body, { status: gate.status });
     }
@@ -189,7 +223,7 @@ export async function POST(req: Request) {
     const files = formData.getAll("files");
 
     if (!files || files.length === 0) {
-      return new NextResponse("No files uploaded.", { status: 400 });
+      return NextResponse.json({ error: "No files uploaded." }, { status: 400 });
     }
 
     const parsedRows: any[] = [];
@@ -212,15 +246,11 @@ export async function POST(req: Request) {
     }
 
     if (parsedRows.length === 0) {
-      return new NextResponse("No valid .eml files found.", { status: 400 });
+      return NextResponse.json({ error: "No valid .eml files found." }, { status: 400 });
     }
 
-    const [xlsxBytes, pdfBuffer] = await Promise.all([
-      rowsToXlsxBuffer(parsedRows),
-      rowsToPdfBuffer(parsedRows),
-    ]);
-
     if (output === "pdf") {
+      const pdfBuffer = await rowsToPdfBuffer(parsedRows);
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
         headers: {
@@ -230,6 +260,7 @@ export async function POST(req: Request) {
       });
     }
 
+    const xlsxBytes = await rowsToXlsxBuffer(parsedRows);
     return new NextResponse(new Uint8Array(xlsxBytes), {
       status: 200,
       headers: {
@@ -239,6 +270,10 @@ export async function POST(req: Request) {
       },
     });
   } catch (err: any) {
-    return new NextResponse(err?.message || "Conversion failed.", { status: 500 });
+    console.error("❌ convert-eml failed:", err);
+    return NextResponse.json(
+      { error: "Conversion failed.", message: err?.message ?? String(err) },
+      { status: 500 }
+    );
   }
 }
