@@ -42,6 +42,37 @@ const NAV: NavItem[] = [
   { label: "Account", href: "/app/account" },
 ];
 
+const FALLBACK_FREE: Usage = {
+  plan: "Free",
+  used: 0,
+  remaining: 3,
+  free_limit: 3,
+};
+
+function normalizeUsage(input: any): Usage {
+  if (!input || typeof input !== "object") return FALLBACK_FREE;
+
+  const plan = String(input.plan ?? "Free");
+  const free_limit =
+    typeof input.free_limit === "number" ? input.free_limit : typeof input.limit === "number" ? input.limit : 3;
+
+  const used = typeof input.used === "number" ? input.used : 0;
+
+  // remaining can be null for unlimited
+  const remaining =
+    input.remaining === null ? null : typeof input.remaining === "number" ? input.remaining : Math.max(0, free_limit - used);
+
+  return {
+    plan,
+    used,
+    remaining,
+    free_limit,
+    limit: typeof input.limit === "number" ? input.limit : undefined,
+    status: typeof input.status === "string" ? input.status : undefined,
+    isPaid: typeof input.isPaid === "boolean" ? input.isPaid : undefined,
+  };
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -64,21 +95,31 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const refreshUsage = async () => {
     setUsageLoading(true);
+
     try {
       const authHeaders = await getAuthHeaders();
 
       const res = await fetch("/api/usage", {
         cache: "no-store",
-        headers: authHeaders,
+        headers: {
+          ...(authHeaders ?? {}),
+        },
       });
 
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Failed to load usage");
+      const json = await res.json().catch(() => null);
 
-      setUsage(json as Usage);
+      // ✅ FAIL-OPEN: if usage endpoint errors, do not throw; fall back to Free
+      if (!res.ok) {
+        console.warn("usage: non-OK response", res.status, json);
+        setUsage(normalizeUsage(json) ?? FALLBACK_FREE);
+        return;
+      }
+
+      setUsage(normalizeUsage(json));
     } catch (e) {
-      console.error("usage load error", e);
-      setUsage(null);
+      // ✅ FAIL-OPEN: network error, parsing error, etc.
+      console.warn("usage load error (fail-open)", e);
+      setUsage(FALLBACK_FREE);
     } finally {
       setUsageLoading(false);
     }
@@ -89,8 +130,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Prefer explicit booleans if your API returns them
+  const explicitIsPro =
+    (usage?.isPaid === true) ||
+    (typeof usage?.status === "string" && ["active", "trialing"].includes(usage.status.toLowerCase()));
+
   const normalizedPlan = String(usage?.plan || "Free").toLowerCase();
-  const isPro = normalizedPlan === "pro" || normalizedPlan === "starter";
+  const isPro = explicitIsPro || normalizedPlan === "pro" || normalizedPlan === "starter";
 
   const activeHref = useMemo(() => {
     const exact = NAV.find((n) => n.href === pathname)?.href;
