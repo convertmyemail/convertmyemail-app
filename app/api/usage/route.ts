@@ -12,13 +12,11 @@ function asDate(value: any): Date | null {
   if (!value) return null;
   if (value instanceof Date) return value;
 
-  // ISO string
   if (typeof value === "string") {
     const d = new Date(value);
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // unix seconds / ms
   if (typeof value === "number") {
     const ms = value > 1e12 ? value : value * 1000;
     const d = new Date(ms);
@@ -62,20 +60,19 @@ export async function GET() {
 
     const used = count ?? 0;
 
-    // 2) Subscription check (FAIL-OPEN)
+    // 2) Subscription check (fail-open)
     let isPro = false;
-    let status: string = "free";
+    let status = "free";
+    let plan: string = "Free";
 
     try {
-      // Select a wider set of possible column names (harmless if they exist; if not, Supabase may error)
-      // If your table is strict and errors on unknown columns, we catch and fail-open.
+      // ✅ Match your real columns:
+      // user_id, stripe_customer_id, stripe_subscription_id, plan, status, current_period_end, updated_at
       const { data: sub, error: subErr } = await supabase
         .from("subscriptions")
-        .select(
-          "status, current_period_end, current_period_end_at, period_end, stripe_current_period_end, plan"
-        )
+        .select("status, plan, current_period_end, updated_at")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
+        .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
@@ -83,28 +80,36 @@ export async function GET() {
         console.warn("usage: subscription lookup error (fail-open):", subErr);
       } else if (sub) {
         const rawStatus = String((sub as any).status ?? "").toLowerCase();
-        const periodEnd =
-          asDate((sub as any).current_period_end) ||
-          asDate((sub as any).current_period_end_at) ||
-          asDate((sub as any).period_end) ||
-          asDate((sub as any).stripe_current_period_end);
+        const rawPlan = String((sub as any).plan ?? "").toLowerCase();
+
+        const periodEnd = asDate((sub as any).current_period_end);
 
         const active = rawStatus === "active" || rawStatus === "trialing";
+
+        // ✅ If period end is missing but status is active/trialing, treat as Pro (fail-open)
         const notExpired = !periodEnd || periodEnd.getTime() > Date.now();
 
         isPro = active && notExpired;
         status = rawStatus || (isPro ? "active" : "free");
+
+        // Prefer plan value if present, otherwise derive from isPro
+        if (rawPlan) {
+          plan = rawPlan === "pro" || rawPlan === "starter" ? "Pro" : rawPlan;
+        } else {
+          plan = isPro ? "Pro" : "Free";
+        }
       }
     } catch (e) {
       console.warn("usage: subscription verify threw (fail-open):", e);
       isPro = false;
       status = "free";
+      plan = "Free";
     }
 
     const remaining = isPro ? null : Math.max(0, FREE_LIMIT - used);
 
     return NextResponse.json({
-      plan: isPro ? "Pro" : "Free",
+      plan,
       used,
       remaining,
       free_limit: FREE_LIMIT,
