@@ -13,6 +13,22 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* Light/Dark favicons */}
+        <link
+          rel="icon"
+          href="/favicon-light.ico"
+          media="(prefers-color-scheme: light)"
+        />
+        <link
+          rel="icon"
+          href="/favicon-dark.ico"
+          media="(prefers-color-scheme: dark)"
+        />
+
+        {/* Apple touch icon */}
+        <link rel="apple-touch-icon" href="/apple-icon.png" />
+      </head>
       <body className="min-h-screen bg-white text-gray-900">{children}</body>
     </html>
   );
