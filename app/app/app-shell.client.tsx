@@ -94,6 +94,7 @@ function BrandMark({ size = 36 }: { size?: number }) {
         alt=""
         width={size}
         height={size}
+        unoptimized
         priority
         className="block h-full w-full object-contain dark:hidden"
       />
@@ -102,6 +103,7 @@ function BrandMark({ size = 36 }: { size?: number }) {
         alt=""
         width={size}
         height={size}
+        unoptimized
         priority
         className="hidden h-full w-full object-contain dark:block"
       />
@@ -248,9 +250,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="px-6 py-5">
               <Link
                 href="/"
-                className="flex items-center gap-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+                className="flex items-center gap-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
               >
-                <BrandMark size={32} />
+                <BrandMark size={40} />
                 <div className="min-w-0">
                   <div className="text-sm font-semibold tracking-tight hover:opacity-90">
                     Convert My Email
