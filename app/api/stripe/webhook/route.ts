@@ -7,18 +7,39 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2024-12-18.acacia" as any,
 });
 
-// ✅ Live price_id → plan mapping (from your Stripe audit)
-const PRICE_ID_TO_PLAN: Record<string, "starter" | "pro" | "business"> = {
-  "price_1T5zOpEj5mdryKo2HoCYEqXj": "starter", // $9
-  "price_1T5zOlEj5mdryKo2amp3eqCE": "pro", // $19
-  "price_1T6ZytEj5mdryKo2Xezisyoq": "business", // $39
-};
-
 type Plan = "free" | "starter" | "pro" | "business";
+
+// ✅ Live price_id → plan mapping (env-driven)
+const STRIPE_STARTER_PRICE_ID = process.env.STRIPE_STARTER_PRICE_ID!;
+const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID!;
+const STRIPE_BUSINESS_PRICE_ID = process.env.STRIPE_BUSINESS_PRICE_ID!;
+
+if (!STRIPE_STARTER_PRICE_ID || !STRIPE_PRO_PRICE_ID || !STRIPE_BUSINESS_PRICE_ID) {
+  console.warn(
+    "[stripe:webhook] Missing STRIPE_*_PRICE_ID env vars. Plan mapping may default to free."
+  );
+}
+
+const PRICE_ID_TO_PLAN: Record<string, Plan> = {
+  [STRIPE_STARTER_PRICE_ID]: "starter",
+  [STRIPE_PRO_PRICE_ID]: "pro",
+  [STRIPE_BUSINESS_PRICE_ID]: "business",
+};
 
 function planFromPriceId(priceId?: string | null): Plan {
   if (!priceId) return "free";
   return PRICE_ID_TO_PLAN[priceId] ?? "free";
+}
+
+// ✅ If multiple subscription items exist, pick the first item that matches a known price id
+function derivePlanFromSubscriptionItems(items: any[] | undefined | null): Plan {
+  const arr = Array.isArray(items) ? items : [];
+  const matchedPriceId =
+    arr
+      .map((i: any) => i?.price?.id)
+      .find((id: any) => typeof id === "string" && PRICE_ID_TO_PLAN[id]) ?? null;
+
+  return planFromPriceId(matchedPriceId);
 }
 
 async function rawBody(req: Request) {
@@ -33,12 +54,7 @@ async function resolvePlanFromSubscription(subscriptionId?: string | null): Prom
       expand: ["items.data.price"],
     });
 
-    const firstItem = sub.items?.data?.[0];
-    const priceId =
-      (firstItem?.price && typeof firstItem.price !== "string" ? firstItem.price.id : null) ??
-      null;
-
-    return planFromPriceId(priceId);
+    return derivePlanFromSubscriptionItems((sub as any)?.items?.data);
   } catch (e: any) {
     console.warn("[stripe:webhook] Could not retrieve subscription for plan:", e?.message);
     return "free";
@@ -177,9 +193,8 @@ export async function POST(req: Request) {
       // typings-safe reads
       const status = (sub as any).status as string | undefined;
 
-      // Derive plan from subscription item price_id (most reliable)
-      const priceId = (sub as any).items?.data?.[0]?.price?.id as string | undefined;
-      const derivedPlan = planFromPriceId(priceId ?? null);
+      // ✅ Derive plan from subscription items (handles multiple items)
+      const derivedPlan = derivePlanFromSubscriptionItems((sub as any)?.items?.data);
 
       // ✅ Billing-cycle window (store BOTH start & end)
       const periodStartUnix = (sub as any).current_period_start as number | undefined;
@@ -188,11 +203,17 @@ export async function POST(req: Request) {
       const cancelAtPeriodEnd = (sub as any).cancel_at_period_end as boolean | undefined;
       const endedAtUnix = (sub as any).ended_at as number | undefined;
 
+      // Optional: log a "matched" price id for debugging
+      const debugMatchedPriceId =
+        ((sub as any)?.items?.data ?? [])
+          .map((i: any) => i?.price?.id)
+          .find((id: any) => typeof id === "string" && PRICE_ID_TO_PLAN[id]) ?? null;
+
       console.log("[stripe:webhook] Subscription lifecycle event:", {
         subscriptionId,
         customerId,
         status,
-        priceId,
+        priceId: debugMatchedPriceId,
         derivedPlan,
         periodStartUnix,
         periodEndUnix,
@@ -243,9 +264,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true });
   } catch (e: any) {
     console.error("[stripe:webhook] Handler FAILED:", e);
-    return NextResponse.json(
-      { error: e?.message ?? "Webhook handler failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e?.message ?? "Webhook handler failed" }, { status: 500 });
   }
 }
