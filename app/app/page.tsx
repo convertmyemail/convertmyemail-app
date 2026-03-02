@@ -3,7 +3,7 @@ import UploadPageClient from "./uploadpage.client";
 
 export const dynamic = "force-dynamic";
 
-type UsageInfo =
+export type UsageInfo =
   | {
       plan: "Pro";
       isPaid: true;
@@ -21,15 +21,16 @@ type UsageInfo =
       status: "free";
     };
 
-export default function AppPage() {
-  const usage: UsageInfo = {
-    plan: "Free",
-    isPaid: false,
-    used: 0,
-    remaining: 3,
-    limit: 3,
-    status: "free",
-  };
+// Safe fallback; client shell will refresh with real values
+const FALLBACK_USAGE: UsageInfo = {
+  plan: "Free",
+  isPaid: false,
+  used: 0,
+  remaining: 3,
+  limit: 3,
+  status: "free",
+};
 
-  return <UploadPageClient usage={usage} />;
+export default function AppPage() {
+  return <UploadPageClient usage={FALLBACK_USAGE} />;
 }

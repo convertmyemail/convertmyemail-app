@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { supabase } from "../../lib/supabase/browser";
 
 function safeNextPath(nextRaw: string | null) {
@@ -143,10 +144,31 @@ export default function LoginPage() {
     <div className="min-h-screen bg-white text-gray-900">
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div>
-            <div className="text-sm font-semibold tracking-tight">Convert My Email</div>
-            <div className="mt-1 text-xs text-gray-500">Professional conversions</div>
+          <div className="flex items-center gap-3">
+            {/* Brand icon (light/dark) */}
+            <div className="relative h-9 w-9 shrink-0">
+              <Image
+                src="/icon-light.png"
+                alt="ConvertMyEmail"
+                fill
+                priority
+                className="rounded-xl object-contain dark:hidden"
+              />
+              <Image
+                src="/icon-dark.png"
+                alt="ConvertMyEmail"
+                fill
+                priority
+                className="hidden rounded-xl object-contain dark:block"
+              />
+            </div>
+
+            <div>
+              <div className="text-sm font-semibold tracking-tight">Convert My Email</div>
+              <div className="mt-1 text-xs text-gray-500">Professional conversions</div>
+            </div>
           </div>
+
           <div className="text-xs text-gray-500">Secure sign-in</div>
         </div>
       </header>
