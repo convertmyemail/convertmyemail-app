@@ -1,6 +1,7 @@
 // app/api/stripe/portal/route.ts
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
+import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
@@ -10,7 +11,11 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 export async function POST(req: Request) {
   try {
-    const supabase = createSupabaseServerClient();
+    // ✅ Bind cookies to request context (cookie-based auth)
+    await cookies();
+
+    // ✅ Your helper returns a Promise in this codebase
+    const supabase = await createSupabaseServerClient();
 
     const {
       data: { user },
@@ -24,9 +29,9 @@ export async function POST(req: Request) {
     // Get most recent subscription row (where you stored stripe_customer_id)
     const { data: sub, error: subErr } = await supabase
       .from("subscriptions")
-      .select("stripe_customer_id, customer_id, stripe_customer")
+      .select("stripe_customer_id, updated_at")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
+      .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -34,10 +39,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Failed to load subscription" }, { status: 500 });
     }
 
-    const customerId =
-      (sub as any)?.stripe_customer_id ||
-      (sub as any)?.customer_id ||
-      (sub as any)?.stripe_customer;
+    const customerId = sub?.stripe_customer_id ?? null;
 
     if (!customerId) {
       return NextResponse.json({ error: "No Stripe customer found" }, { status: 400 });
@@ -52,10 +54,8 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || "Failed to create portal session" },
-      { status: 500 }
-    );
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to create portal session";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
