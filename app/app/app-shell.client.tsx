@@ -50,24 +50,27 @@ const FALLBACK_FREE: Usage = {
   free_limit: 3,
 };
 
-function normalizeUsage(input: any): Usage {
+function normalizeUsage(input: unknown): Usage {
   if (!input || typeof input !== "object") return FALLBACK_FREE;
 
-  const plan = String(input.plan ?? "Free");
+  const obj = input as Record<string, unknown>;
+
+  const plan = String(obj.plan ?? "Free");
+
   const free_limit =
-    typeof input.free_limit === "number"
-      ? input.free_limit
-      : typeof input.limit === "number"
-      ? input.limit
+    typeof obj.free_limit === "number"
+      ? obj.free_limit
+      : typeof obj.limit === "number"
+      ? obj.limit
       : 3;
 
-  const used = typeof input.used === "number" ? input.used : 0;
+  const used = typeof obj.used === "number" ? obj.used : 0;
 
   const remaining =
-    input.remaining === null
+    obj.remaining === null
       ? null
-      : typeof input.remaining === "number"
-      ? input.remaining
+      : typeof obj.remaining === "number"
+      ? obj.remaining
       : Math.max(0, free_limit - used);
 
   return {
@@ -75,9 +78,9 @@ function normalizeUsage(input: any): Usage {
     used,
     remaining,
     free_limit,
-    limit: typeof input.limit === "number" ? input.limit : undefined,
-    status: typeof input.status === "string" ? input.status : undefined,
-    isPaid: typeof input.isPaid === "boolean" ? input.isPaid : undefined,
+    limit: typeof obj.limit === "number" ? obj.limit : undefined,
+    status: typeof obj.status === "string" ? obj.status : undefined,
+    isPaid: typeof obj.isPaid === "boolean" ? obj.isPaid : undefined,
   };
 }
 
@@ -142,16 +145,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         },
       });
 
-      const json = await res.json().catch(() => null);
+      const json: unknown = await res.json().catch(() => null);
 
       if (!res.ok) {
         console.warn("usage: non-OK response", res.status, json);
-        setUsage(normalizeUsage(json) ?? FALLBACK_FREE);
+        setUsage(normalizeUsage(json));
         return;
       }
 
       setUsage(normalizeUsage(json));
-    } catch (e) {
+    } catch (e: unknown) {
       console.warn("usage load error (fail-open)", e);
       setUsage(FALLBACK_FREE);
     } finally {
@@ -202,17 +205,25 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ priceKey }),
       });
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || "Could not start checkout");
+      const data: unknown = await res.json().catch(() => ({}));
+      const obj = (data && typeof data === "object" ? (data as Record<string, unknown>) : {}) as Record<
+        string,
+        unknown
+      >;
 
-      if (data?.url) {
+      if (!res.ok) {
+        const errMsg = typeof obj.error === "string" ? obj.error : "Could not start checkout";
+        throw new Error(errMsg);
+      }
+
+      if (typeof obj.url === "string" && obj.url) {
         refreshUsage().catch(() => {});
-        window.location.href = data.url;
+        window.location.href = obj.url;
         return;
       }
 
       throw new Error("Missing checkout URL");
-    } catch (e) {
+    } catch (e: unknown) {
       checkoutStartedRef.current = false;
       console.error("checkout error", e);
     }
@@ -262,7 +273,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             </div>
 
-            <nav className="px-3 space-y-1">
+            <nav className="space-y-1 px-3">
               {NAV.map((item) => (
                 <SidebarItem key={item.href} href={item.href} active={activeHref === item.href}>
                   {item.label}
@@ -328,7 +339,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     )}
                   </div>
 
-                  <div className="mt-1 text-xs text-gray-500 truncate">
+                  <div className="mt-1 truncate text-xs text-gray-500">
                     Convert email files into clean records for storage or submission.
                   </div>
                 </div>
@@ -362,7 +373,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               </div>
 
               {/* Mobile nav */}
-              <div className="md:hidden border-t border-gray-200">
+              <div className="border-t border-gray-200 md:hidden">
                 <div className="mx-auto flex max-w-6xl gap-2 overflow-x-auto px-4 py-2">
                   {NAV.map((item) => (
                     <Link

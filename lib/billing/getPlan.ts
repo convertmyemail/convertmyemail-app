@@ -2,17 +2,19 @@ import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export type Plan =
   | { name: "PRO"; isPaid: true; status: string }
-  | { name: "FREE"; isPaid: false; status: "free" };
+  | { name: "FREE"; isPaid: false; status: "free" | string };
 
-export async function getPlanForUser() {
-  const supabase = createSupabaseServerClient();
+export async function getPlanForUser(): Promise<Plan> {
+  const supabase = await createSupabaseServerClient();
 
   const {
     data: { user },
     error: userErr,
   } = await supabase.auth.getUser();
 
-  if (userErr || !user) return { name: "FREE", isPaid: false, status: "free" } as Plan;
+  if (userErr || !user) {
+    return { name: "FREE", isPaid: false, status: "free" };
+  }
 
   const { data, error } = await supabase
     .from("subscriptions")
@@ -22,10 +24,16 @@ export async function getPlanForUser() {
     .limit(1)
     .maybeSingle();
 
-  if (error || !data?.status) return { name: "FREE", isPaid: false, status: "free" } as Plan;
+  if (error || !data?.status) {
+    return { name: "FREE", isPaid: false, status: "free" };
+  }
 
-  const paid = data.status === "active" || data.status === "trialing";
-  return paid
-    ? ({ name: "PRO", isPaid: true, status: data.status } as Plan)
-    : ({ name: "FREE", isPaid: false, status: data.status } as Plan);
+  const status = String(data.status).toLowerCase();
+  const paid = status === "active" || status === "trialing";
+
+  if (paid) {
+    return { name: "PRO", isPaid: true, status };
+  }
+
+  return { name: "FREE", isPaid: false, status };
 }

@@ -13,6 +13,15 @@ type UserInfo = {
   created_at: string | null;
 };
 
+function readCreatedAtFromUser(user: unknown): string | null {
+  if (!user || typeof user !== "object") return null;
+
+  const maybe = user as Record<string, unknown>;
+  const createdAt = maybe["created_at"];
+
+  return typeof createdAt === "string" ? createdAt : null;
+}
+
 export default function AccountPage() {
   const router = useRouter();
 
@@ -32,9 +41,9 @@ export default function AccountPage() {
         setUser({
           id: data.user.id,
           email: data.user.email ?? null,
-          created_at: (data.user as any)?.created_at ?? null,
+          created_at: readCreatedAtFromUser(data.user),
         });
-      } catch (e) {
+      } catch (e: unknown) {
         console.error("account load error", e);
         setUser(null);
       } finally {
@@ -93,14 +102,14 @@ export default function AccountPage() {
             <div className="mt-6 grid gap-6 md:grid-cols-2">
               <div className="rounded-2xl border border-gray-200 p-6">
                 <div className="text-xs font-medium text-gray-500">Email</div>
-                <div className="mt-1 text-sm font-semibold text-gray-900 break-all">
+                <div className="mt-1 break-all text-sm font-semibold text-gray-900">
                   {user.email || "(no email)"}
                 </div>
 
                 {user.email && (
                   <button
                     className="mt-3 rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-gray-50"
-                    onClick={() => copy(user.email!, "Email")}
+                    onClick={() => user.email && copy(user.email, "Email")}
                     type="button"
                   >
                     Copy email
@@ -110,7 +119,7 @@ export default function AccountPage() {
 
               <div className="rounded-2xl border border-gray-200 p-6">
                 <div className="text-xs font-medium text-gray-500">User ID</div>
-                <div className="mt-1 text-sm font-semibold text-gray-900 break-all">
+                <div className="mt-1 break-all text-sm font-semibold text-gray-900">
                   {user.id}
                 </div>
 

@@ -6,7 +6,7 @@ export type UsageInfo =
   | {
       plan: "Pro";
       isPaid: true;
-      used: number | null;
+      used: null;
       remaining: null;
       limit: null;
       status: string;
@@ -21,7 +21,7 @@ export type UsageInfo =
     };
 
 export async function getUsageForCurrentUser(): Promise<UsageInfo> {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
 
   const {
     data: { user },
@@ -29,7 +29,6 @@ export async function getUsageForCurrentUser(): Promise<UsageInfo> {
   } = await supabase.auth.getUser();
 
   if (userErr || !user) {
-    // Not logged in; treat as Free with 0 used
     return {
       plan: "Free",
       isPaid: false,
@@ -40,17 +39,24 @@ export async function getUsageForCurrentUser(): Promise<UsageInfo> {
     };
   }
 
-  // Latest subscription
+  // Latest subscription snapshot
   const { data: sub } = await supabase
     .from("subscriptions")
-    .select("status, stripe_status, created_at")
+    .select("status, current_period_end, updated_at")
     .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  const subStatus = String(sub?.status || sub?.stripe_status || "").toLowerCase();
-  const isPaid = subStatus === "active" || subStatus === "trialing";
+  const status = String(sub?.status || "").toLowerCase();
+  const isActive = status === "active" || status === "trialing";
+
+  const periodEnd = sub?.current_period_end
+    ? new Date(sub.current_period_end)
+    : null;
+
+  const notExpired = !periodEnd || periodEnd.getTime() > Date.now();
+  const isPaid = isActive && notExpired;
 
   if (isPaid) {
     return {
@@ -59,11 +65,11 @@ export async function getUsageForCurrentUser(): Promise<UsageInfo> {
       used: null,
       remaining: null,
       limit: null,
-      status: subStatus || "active",
+      status: status || "active",
     };
   }
 
-  // Count conversions (fast)
+  // Free lifetime usage
   const { count } = await supabase
     .from("conversions")
     .select("id", { count: "exact", head: true })

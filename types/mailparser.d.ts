@@ -1,3 +1,18 @@
 declare module "mailparser" {
-  export function simpleParser(input: any, options?: any): Promise<any>;
+  export interface ParsedAddress {
+    text?: string;
+  }
+
+  export interface ParsedMail {
+    from?: ParsedAddress;
+    to?: ParsedAddress;
+    subject?: string;
+    date?: Date | null;
+    text?: string | null;
+  }
+
+  export function simpleParser(
+    source: Buffer | string,
+    options?: Record<string, unknown>
+  ): Promise<ParsedMail>;
 }

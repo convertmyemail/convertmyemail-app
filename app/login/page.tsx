@@ -19,13 +19,36 @@ function cleanBaseUrl(url: string) {
 const COOLDOWN_SECONDS = 60;
 const COOLDOWN_KEY = "cme_magiclink_cooldown_until";
 
+function getInitialFromLocation(): { nextPath: string; status: string } {
+  if (typeof window === "undefined") return { nextPath: "/app", status: "" };
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const n = params.get("next");
+    const nextPath = safeNextPath(n);
+
+    const err = params.get("error");
+    const reason = params.get("reason");
+
+    const status =
+      err ? (reason ? `Login error: ${reason}` : `Login error: ${err}`) : "";
+
+    return { nextPath, status };
+  } catch {
+    return { nextPath: "/app", status: "" };
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [nextPath, setNextPath] = useState("/app");
+
+  // ✅ initialize from URL without setState-in-effect lint warnings
+  const initial = useMemo(() => getInitialFromLocation(), []);
+  const [nextPath] = useState<string>(initial.nextPath);
+  const [status, setStatus] = useState<string>(initial.status);
 
   // Cooldown state
   const [cooldownUntil, setCooldownUntil] = useState<number>(0);
@@ -35,26 +58,8 @@ export default function LoginPage() {
   const baseUrl = useMemo(() => {
     const env = cleanBaseUrl(process.env.NEXT_PUBLIC_SITE_URL || "");
     if (env) return env;
-    // fallback for local dev / missing env
     if (typeof window !== "undefined") return cleanBaseUrl(window.location.origin);
     return "";
-  }, []);
-
-  // Read ?next= from the URL on the client (avoids build/prerender issues)
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const n = params.get("next");
-      setNextPath(safeNextPath(n));
-
-      const err = params.get("error");
-      const reason = params.get("reason");
-      if (err) {
-        setStatus(reason ? `Login error: ${reason}` : `Login error: ${err}`);
-      }
-    } catch {
-      // ignore
-    }
   }, []);
 
   // If already logged in, bounce to app
@@ -127,8 +132,8 @@ export default function LoginPage() {
 
       setStatus("Magic link sent. Check your email to sign in.");
       startCooldown(COOLDOWN_SECONDS);
-    } catch (e: any) {
-      const msg = e?.message || "Failed to send magic link.";
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to send magic link.";
       setStatus(msg);
 
       // If something rate-limit-ish happens, back off a bit longer
@@ -201,14 +206,12 @@ export default function LoginPage() {
               </div>
 
               <p className="text-xs text-gray-500">
-                Redirect after login:{" "}
-                <span className="font-medium text-gray-700">{nextPath}</span>
+                Redirect after login: <span className="font-medium text-gray-700">{nextPath}</span>
               </p>
 
               {/* Optional: helpful debug line (remove anytime) */}
               <p className="text-[10px] text-gray-400">
-                Callback base:{" "}
-                <span className="font-medium">{baseUrl || "(window origin)"}</span>
+                Callback base: <span className="font-medium">{baseUrl || "(window origin)"}</span>
               </p>
             </div>
           </div>
@@ -218,14 +221,15 @@ export default function LoginPage() {
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
             <div>
               <div className="text-sm font-semibold">Magic link</div>
-              <div className="mt-1 text-xs text-gray-500">
-                We’ll email you a secure sign-in link.
-              </div>
+              <div className="mt-1 text-xs text-gray-500">We’ll email you a secure sign-in link.</div>
             </div>
 
             <div className="mt-5">
-              <label className="text-xs font-medium text-gray-700">Email</label>
+              <label className="text-xs font-medium text-gray-700" htmlFor="email">
+                Email
+              </label>
               <input
+                id="email"
                 className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-gray-400 focus:border-gray-900"
                 placeholder="you@company.com"
                 value={email}
@@ -242,11 +246,7 @@ export default function LoginPage() {
               disabled={loading || isCooldownActive}
               type="button"
             >
-              {loading
-                ? "Sending…"
-                : isCooldownActive
-                ? `Resend in ${secondsLeft}s`
-                : "Send magic link"}
+              {loading ? "Sending…" : isCooldownActive ? `Resend in ${secondsLeft}s` : "Send magic link"}
             </button>
 
             {isCooldownActive && !loading && (
@@ -264,9 +264,8 @@ export default function LoginPage() {
             <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="text-xs font-medium text-gray-700">Trouble?</div>
               <p className="mt-1 text-xs text-gray-600">
-                If you don’t see the email, check spam/junk and try again. Some providers delay
-                delivery briefly. Also make sure you open the magic link in the same browser you
-                used to request it.
+                If you don’t see the email, check spam/junk and try again. Some providers delay delivery briefly.
+                Also make sure you open the magic link in the same browser you used to request it.
               </p>
             </div>
           </div>

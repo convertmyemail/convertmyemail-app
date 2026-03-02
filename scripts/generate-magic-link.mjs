@@ -1,13 +1,16 @@
-require("dotenv").config({ path: ".env.local" });
+import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 
-const { createClient } = require("@supabase/supabase-js");
+dotenv.config({ path: ".env.local" });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Use your canonical domain from env if present, else fall back
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://convertmyemail.com")
-  .replace(/\/$/, "");
+const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://convertmyemail.com").replace(
+  /\/$/,
+  ""
+);
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   throw new Error(
@@ -24,12 +27,8 @@ async function main() {
   let nextArg = process.argv[3] || "/app"; // optional override
 
   if (!email) {
-    console.log(
-      "Usage: node scripts/generate-magic-link.js you@domain.com [/nextPath]"
-    );
-    console.log(
-      'Example: node scripts/generate-magic-link.js you@domain.com "/app"'
-    );
+    console.log("Usage: node scripts/generate-magic-link.mjs you@domain.com [/nextPath]");
+    console.log('Example: node scripts/generate-magic-link.mjs you@domain.com "/app"');
     process.exit(1);
   }
 
@@ -37,9 +36,7 @@ async function main() {
   if (!nextArg.startsWith("/")) nextArg = `/${nextArg}`;
 
   // ✅ Force canonical domain + callback, preserve next
-  const redirectTo = `${SITE_URL}/auth/callback?next=${encodeURIComponent(
-    nextArg
-  )}`;
+  const redirectTo = `${SITE_URL}/auth/callback?next=${encodeURIComponent(nextArg)}`;
 
   const { data, error } = await supabaseAdmin.auth.admin.generateLink({
     type: "magiclink",
@@ -69,7 +66,9 @@ async function main() {
     );
     console.error("Fix in Supabase → Authentication → URL Configuration:");
     console.error(`- Site URL: ${SITE_URL}`);
-    console.error(`- Redirect URLs include: ${SITE_URL}/** (and optionally https://www.convertmyemail.com/**)`);
+    console.error(
+      `- Redirect URLs include: ${SITE_URL}/** (and optionally https://www.convertmyemail.com/**)`
+    );
     process.exit(2);
   }
 

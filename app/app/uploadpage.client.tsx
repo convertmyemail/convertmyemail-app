@@ -42,6 +42,22 @@ type LimitModalState = {
   message?: string;
 };
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
+}
+
+function readNumber(obj: Record<string, unknown> | null, key: string): number | null {
+  if (!obj) return null;
+  const v = obj[key];
+  return typeof v === "number" ? v : null;
+}
+
+function readString(obj: Record<string, unknown> | null, key: string): string | null {
+  if (!obj) return null;
+  const v = obj[key];
+  return typeof v === "string" ? v : null;
+}
+
 export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -49,26 +65,29 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
   const { usage: shellUsage, usageLoading, isPro, refreshUsage, startCheckout } = useAppShell();
 
   // Prefer freshest usage from shell once it loads; fallback to server-passed usage
-  const effectiveUsage = shellUsage ?? usage;
+  const effectiveUsage = (shellUsage ?? usage) as unknown;
+  const usageObj = asRecord(effectiveUsage);
 
   // Normalize usage fields (app shell type vs server type)
   const usageUsed =
-    (effectiveUsage as any)?.used ??
-    (effectiveUsage as any)?.usage_used ??
-    (effectiveUsage as any)?.used_count ??
+    readNumber(usageObj, "used") ??
+    readNumber(usageObj, "usage_used") ??
+    readNumber(usageObj, "used_count") ??
     0;
 
-  const usageRemaining =
-    (effectiveUsage as any)?.remaining ??
-    (effectiveUsage as any)?.usage_remaining ??
-    (effectiveUsage as any)?.remaining_count ??
-    0;
+  const usageRemainingRaw =
+    (usageObj && usageObj["remaining"] === null ? null : readNumber(usageObj, "remaining")) ??
+    readNumber(usageObj, "usage_remaining") ??
+    readNumber(usageObj, "remaining_count");
 
   const usageLimit =
-    (effectiveUsage as any)?.limit ??
-    (effectiveUsage as any)?.free_limit ??
-    (effectiveUsage as any)?.freeLimit ??
+    readNumber(usageObj, "limit") ??
+    readNumber(usageObj, "free_limit") ??
+    readNumber(usageObj, "freeLimit") ??
     FREE_LIMIT_FALLBACK;
+
+  const usageRemaining =
+    usageRemainingRaw === null ? null : typeof usageRemainingRaw === "number" ? usageRemainingRaw : 0;
 
   const [files, setFiles] = useState<FileList | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -102,11 +121,19 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
 
     try {
       const res = await fetch("/api/history", { cache: "no-store" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json?.error || "Failed to load history");
-      setHistory(Array.isArray(json?.conversions) ? json.conversions : []);
-    } catch (e: any) {
-      setHistoryError(e?.message || "Failed to load history");
+      const json: unknown = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = readString(asRecord(json), "error") ?? "Failed to load history";
+        throw new Error(msg);
+      }
+
+      const j = asRecord(json);
+      const conversions = j && Array.isArray(j["conversions"]) ? (j["conversions"] as Conversion[]) : [];
+      setHistory(conversions);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to load history";
+      setHistoryError(msg);
     } finally {
       setHistoryLoading(false);
     }
@@ -126,10 +153,8 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
 
       if (!res.ok) {
         let msg = "Download failed";
-        try {
-          const j = await res.json();
-          msg = j?.error || msg;
-        } catch {}
+        const j: unknown = await res.json().catch(() => null);
+        msg = readString(asRecord(j), "error") ?? msg;
         throw new Error(msg);
       }
 
@@ -155,8 +180,9 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
       a.remove();
 
       window.URL.revokeObjectURL(objectUrl);
-    } catch (e: any) {
-      setHistoryError(e?.message || "Download failed");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Download failed";
+      setHistoryError(msg);
     } finally {
       setDownloadingKey(null);
     }
@@ -165,17 +191,17 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
   // Load history on mount
   useEffect(() => {
     loadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, []);
 
   // Auto-start checkout on /app?plan=pro (deep-link)
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    const planKey = (sp.get("plan") || "").trim().toLowerCase();
-    if (planKey !== "starter" && planKey !== "pro") return;
-    startCheckout(planKey as "starter" | "pro");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+useEffect(() => {
+  const sp = new URLSearchParams(window.location.search);
+  const planKey = (sp.get("plan") || "").trim().toLowerCase();
+  if (planKey !== "starter" && planKey !== "pro") return;
+
+  startCheckout(planKey as "starter" | "pro");
+}, [startCheckout]);
 
   // Close modal with Escape
   useEffect(() => {
@@ -220,27 +246,30 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
       let limitFromServer: number | undefined;
 
       try {
-        const maybeJson = await res.json();
+        const maybeJson: unknown = await res.json().catch(() => null);
+        const j = asRecord(maybeJson);
 
-        // 402 + FREE_LIMIT_REACHED => open modal
+        const code = readString(j, "code") ?? "";
+        const errStr = readString(j, "error") ?? "";
+        const messageStr = readString(j, "message") ?? "";
+
+        // 402 + FREE_LIMIT_REACHED / LIMIT_REACHED => open modal
         const isLimit =
           res.status === 402 &&
-          (maybeJson?.code === "FREE_LIMIT_REACHED" ||
-            /limit/i.test(String(maybeJson?.error || "")));
+          (code === "FREE_LIMIT_REACHED" || code === "LIMIT_REACHED" || /limit/i.test(errStr));
 
         if (isLimit) {
-          usedFromServer = typeof maybeJson?.used === "number" ? maybeJson.used : undefined;
+          usedFromServer = readNumber(j, "used") ?? undefined;
+
           limitFromServer =
-            typeof maybeJson?.free_limit === "number"
-              ? maybeJson.free_limit
-              : typeof maybeJson?.limit === "number"
-              ? maybeJson.limit
-              : undefined;
+            readNumber(j, "free_limit") ??
+            readNumber(j, "limit") ??
+            undefined;
 
           openLimitModal({
             used: usedFromServer,
             limit: limitFromServer,
-            message: maybeJson?.message || maybeJson?.error,
+            message: messageStr || errStr || undefined,
           });
 
           msg =
@@ -249,9 +278,9 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
               ? `You’ve used ${usedFromServer}/${limitFromServer} free conversions. `
               : "") +
             `Upgrade to continue.`;
-        } else if (maybeJson?.error) {
-          msg = maybeJson.error;
-        } else {
+        } else if (errStr) {
+          msg = errStr;
+        } else if (maybeJson) {
           msg = JSON.stringify(maybeJson);
         }
       } catch {
@@ -333,14 +362,12 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
                     width: `${Math.min(
                       100,
                       Math.round(
-                        (((typeof limitModal.used === "number" ? limitModal.used : usageUsed) as number) /
+                        ((Number(typeof limitModal.used === "number" ? limitModal.used : usageUsed) /
                           Math.max(
                             1,
-                            (typeof limitModal.limit === "number"
-                              ? limitModal.limit
-                              : usageLimit) as number
+                            Number(typeof limitModal.limit === "number" ? limitModal.limit : usageLimit)
                           )) *
-                          100
+                          100)
                       )
                     )}%`,
                   }}
@@ -408,7 +435,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
               Choose files
             </button>
 
-            {/* ✅ Convert to Excel — NOW MATCHES PDF */}
+            {/* Convert to Excel */}
             <button
               className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
               onClick={() => {
@@ -464,7 +491,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
               </button>
             </div>
 
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white border border-gray-200">
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full border border-gray-200 bg-white">
               <div
                 className="h-full bg-gray-900"
                 style={{
@@ -484,6 +511,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
           onChange={(e) => setFiles(e.target.files)}
         />
 
+        {/* Selected files */}
         <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4">
           {!files || files.length === 0 ? (
             <div className="flex flex-col gap-1">
@@ -495,7 +523,9 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
           ) : (
             <>
               <div className="flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-900">{files.length} file(s) selected</div>
+                <div className="text-sm font-medium text-gray-900">
+                  {files.length} file(s) selected
+                </div>
                 <button
                   className="text-sm font-medium text-gray-700 hover:text-gray-900"
                   onClick={() => setFiles(null)}
@@ -647,7 +677,6 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
 
                       <td className="py-3 text-right">
                         <div className="flex justify-end gap-2">
-                          {/* ✅ History Excel button now matches PDF too */}
                           <button
                             className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
                             onClick={() => c.sheet_path && downloadConversionFile(c.id, "sheet")}

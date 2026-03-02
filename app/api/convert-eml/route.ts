@@ -1,16 +1,36 @@
 import { NextResponse } from "next/server";
 import { simpleParser } from "mailparser";
-import { createClient } from "@supabase/supabase-js";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import ExcelJS from "exceljs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const FREE_LIMIT = 3;
 const BUCKET = "conversions";
 
-function createSupabaseWithAuth(req: Request) {
+// Plan + limits (per your pricing)
+type Plan = "free" | "starter" | "pro" | "business";
+const LIMITS: Record<Plan, number | null> = {
+  free: 3, // lifetime
+  starter: 50, // per billing cycle
+  pro: 250, // per billing cycle
+  business: null, // unlimited
+};
+
+type SubscriptionRow = {
+  status: string | null;
+  plan: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  updated_at: string | null;
+};
+
+type ConversionRow = {
+  id: string;
+};
+
+function createSupabaseWithAuth(req: Request): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
   const authHeader = req.headers.get("authorization") || "";
@@ -27,59 +47,129 @@ function createSupabaseWithAuth(req: Request) {
   });
 }
 
-function asDate(value: any): Date | null {
+function asDate(value: unknown): Date | null {
   if (!value) return null;
   if (value instanceof Date) return value;
 
   if (typeof value === "string") {
     const d = new Date(value);
-    return isNaN(d.getTime()) ? null : d;
+    return Number.isNaN(d.getTime()) ? null : d;
   }
 
   if (typeof value === "number") {
     const ms = value > 1e12 ? value : value * 1000;
     const d = new Date(ms);
-    return isNaN(d.getTime()) ? null : d;
+    return Number.isNaN(d.getTime()) ? null : d;
   }
 
   return null;
 }
 
-async function checkFreeLimit(supabase: any, userId: string) {
+async function getSubscriptionSnapshot(supabase: SupabaseClient, userId: string) {
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
-    .select("status, plan, current_period_end, updated_at")
+    .select("status, plan, current_period_start, current_period_end, updated_at")
     .eq("user_id", userId)
     .order("updated_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle<SubscriptionRow>();
 
   if (subErr) {
     console.error("subscription lookup error", subErr);
     return {
       ok: false as const,
-      status: 500,
-      body: {
-        error: "Unable to verify subscription",
-        message: "We couldn’t verify your subscription status. Please try again.",
-      },
+      // fail closed to free, but keep the app functional
+      status: "unknown",
+      plan: "free" as Plan,
+      periodStart: null as Date | null,
+      periodEnd: null as Date | null,
     };
   }
 
-  const subStatus = String(sub?.status || "").toLowerCase();
-  const active = subStatus === "active" || subStatus === "trialing";
+  const status = String(sub?.status || "").toLowerCase();
+  const plan = (String(sub?.plan || "free").toLowerCase() as Plan) || "free";
 
-  const periodEnd = asDate((sub as any)?.current_period_end);
+  const periodStart = asDate(sub?.current_period_start);
+  const periodEnd = asDate(sub?.current_period_end);
+
+  return {
+    ok: true as const,
+    status,
+    plan,
+    periodStart,
+    periodEnd,
+  };
+}
+
+/**
+ * Enforces:
+ * - free: 3 lifetime conversions
+ * - starter: 50 / billing cycle
+ * - pro: 250 / billing cycle
+ * - business: unlimited
+ *
+ * We count "conversions" rows as the unit of usage.
+ */
+async function enforceUsageLimit(supabase: SupabaseClient, userId: string) {
+  const snap = await getSubscriptionSnapshot(supabase, userId);
+
+  const status = String(snap.status || "").toLowerCase();
+  const isActive = status === "active" || status === "trialing";
+
+  const periodEnd = snap.periodEnd;
   const notExpired = !periodEnd || periodEnd.getTime() > Date.now();
 
-  if (active && notExpired) {
-    return { ok: true as const, plan: "Pro" as const };
+  const entitledPlan: Plan = isActive && notExpired ? snap.plan : "free";
+  const limit = LIMITS[entitledPlan];
+
+  // Unlimited
+  if (limit === null) {
+    return {
+      ok: true as const,
+      plan: entitledPlan,
+      limit: null,
+      used: null,
+      remaining: null,
+      window: "unlimited" as const,
+      window_start: null as string | null,
+      window_end: null as string | null,
+    };
   }
 
-  const { count, error: countErr } = await supabase
+  // Determine counting window (billing-cycle aligned for paid plans)
+  let startIso: string | null = null;
+  let endIso: string | null = null;
+  let window: "lifetime" | "billing_cycle" = "lifetime";
+
+  if (entitledPlan === "free") {
+    window = "lifetime";
+  } else {
+    window = "billing_cycle";
+
+    const periodStart = snap.periodStart;
+    if (periodStart) {
+      startIso = periodStart.toISOString();
+    } else {
+      const now = new Date();
+      const fallback = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
+      startIso = fallback.toISOString();
+      console.warn("[convert-eml] Missing current_period_start; falling back to month start", {
+        userId,
+        entitledPlan,
+      });
+    }
+
+    endIso = periodEnd ? periodEnd.toISOString() : null;
+  }
+
+  let q = supabase
     .from("conversions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId);
+
+  if (startIso) q = q.gte("created_at", startIso);
+
+  const { count, error: countErr } = await q;
 
   if (countErr) {
     console.error("conversion count error", countErr);
@@ -91,30 +181,42 @@ async function checkFreeLimit(supabase: any, userId: string) {
   }
 
   const used = count ?? 0;
-  const remaining = Math.max(0, FREE_LIMIT - used);
+  const remaining = Math.max(0, limit - used);
 
-  if (used >= FREE_LIMIT) {
+  if (used >= limit) {
+    const upgradeTarget =
+      entitledPlan === "free" ? "Starter" : entitledPlan === "starter" ? "Pro" : "Business";
+
     return {
       ok: false as const,
       status: 402,
       body: {
-        error: "Free conversion limit reached",
-        message: "You’ve used all free conversions. Upgrade to Pro to continue.",
-        code: "FREE_LIMIT_REACHED",
-        plan: "Free",
-        free_limit: FREE_LIMIT,
+        error: "Conversion limit reached",
+        message:
+          entitledPlan === "free"
+            ? "You’ve used all free conversions. Upgrade to Starter to continue."
+            : `You’ve hit your billing-cycle limit. Upgrade to ${upgradeTarget} to continue.`,
+        code: "LIMIT_REACHED",
+        plan: entitledPlan,
+        limit,
         used,
         remaining,
+        window,
+        window_start: startIso,
+        window_end: endIso,
       },
     };
   }
 
   return {
     ok: true as const,
-    plan: "Free" as const,
-    free_limit: FREE_LIMIT,
+    plan: entitledPlan,
+    limit,
     used,
     remaining,
+    window,
+    window_start: startIso,
+    window_end: endIso,
   };
 }
 
@@ -137,19 +239,16 @@ function splitThread(text: string): string[] {
 
   const separators = [
     /^-+\s*Original Message\s*-+$/gim,
-    /^From:\s.+$/gim, // often begins a quoted header block
+    /^From:\s.+$/gim,
     /^On\s.+wrote:\s*$/gim,
     /^_{5,}\s*$/gim,
   ];
 
-  // Find candidate split points, then pick the earliest “good” ones
   const indices = new Set<number>();
   for (const re of separators) {
     let m: RegExpExecArray | null;
     while ((m = re.exec(body)) !== null) {
-      // avoid splitting at very start
       if (m.index > 40) indices.add(m.index);
-      // prevent infinite loops on zero-width matches
       if (m.index === re.lastIndex) re.lastIndex++;
     }
   }
@@ -157,7 +256,6 @@ function splitThread(text: string): string[] {
   const points = Array.from(indices).sort((a, b) => a - b);
   if (points.length === 0) return [body];
 
-  // Split, but discard tiny fragments
   const chunks: string[] = [];
   let start = 0;
   for (const p of points) {
@@ -171,21 +269,8 @@ function splitThread(text: string): string[] {
   return chunks.length ? chunks : [body];
 }
 
-function safePathSegment(name: string) {
-  return (name || "upload.eml")
-    .replace(/[^\w.\-()+ ]+/g, "_")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
-}
-
 /** Wrap text to fit a given width using pdf-lib font metrics */
-function wrapLines(opts: {
-  text: string;
-  font: any;
-  size: number;
-  maxWidth: number;
-}) {
+function wrapLines(opts: { text: string; font: PDFFont; size: number; maxWidth: number }) {
   const { text, font, size, maxWidth } = opts;
   const words = (text || "").split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -198,7 +283,6 @@ function wrapLines(opts: {
       line = test;
     } else {
       if (line) lines.push(line);
-      // If a single word is too long, hard-split it
       if (font.widthOfTextAtSize(w, size) > maxWidth) {
         let cur = "";
         for (const ch of w) {
@@ -219,7 +303,7 @@ function wrapLines(opts: {
   return lines;
 }
 
-async function rowsToPdfBuffer(rows: any[]): Promise<Buffer> {
+async function rowsToPdfBuffer(rows: Array<Record<string, unknown>>): Promise<Buffer> {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -265,43 +349,35 @@ async function rowsToPdfBuffer(rows: any[]): Promise<Buffer> {
     y = height - marginTop;
   };
 
-  // Title
   page.drawText("Email Export", { x: marginX, y, size: titleSize, font: fontBold });
   y -= 28;
 
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
+    const r = rows[i] as Record<string, unknown>;
 
     const blockHeader = `Email ${i + 1}`;
-    const subject = String(r.subject || "(No subject)").replace(/\s+/g, " ").slice(0, 200);
+    const subject = String(r.subject ?? "(No subject)").replace(/\s+/g, " ").slice(0, 200);
 
     const metaLines = [
-      { k: "File", v: String(r.file_name || "") },
-      { k: "From", v: String(r.from || "") },
-      { k: "To", v: String(r.to || "") },
-      { k: "Date", v: String(r.date || "") },
+      { k: "File", v: String(r.file_name ?? "") },
+      { k: "From", v: String(r.from ?? "") },
+      { k: "To", v: String(r.to ?? "") },
+      { k: "Date", v: String(r.date ?? "") },
       { k: "Subject", v: subject },
     ];
 
-    const bodyText = String(r.body_text || "");
+    const bodyText = String(r.body_text ?? "");
     const maxWidth = width - marginX * 2;
 
-    // Estimate space needed; if not enough, new page
     const approxBodyLines = wrapLines({ text: bodyText, font, size: bodySize, maxWidth }).length;
     const needed =
-      18 + // header
-      metaLines.length * labelLineHeight +
-      10 + // gap
-      Math.min(approxBodyLines, 12) * bodyLineHeight + // rough
-      18; // spacing
+      18 + metaLines.length * labelLineHeight + 10 + Math.min(approxBodyLines, 12) * bodyLineHeight + 18;
 
     if (y - needed < marginBottom) newPage();
 
-    // Block header
     page.drawText(blockHeader, { x: marginX, y, size: 12, font: fontBold });
     y -= 18;
 
-    // Meta
     for (const m of metaLines) {
       const label = `${m.k}: `;
       page.drawText(label, { x: marginX, y, size: labelSize, font: fontBold, color: rgb(0.2, 0.2, 0.2) });
@@ -317,11 +393,9 @@ async function rowsToPdfBuffer(rows: any[]): Promise<Buffer> {
 
     y -= 6;
 
-    // Body label
     page.drawText("Body:", { x: marginX, y, size: labelSize, font: fontBold, color: rgb(0.2, 0.2, 0.2) });
     y -= 14;
 
-    // Body wrapped across pages as needed
     const lines = wrapLines({ text: bodyText || "(empty)", font, size: bodySize, maxWidth });
 
     for (const line of lines) {
@@ -330,7 +404,7 @@ async function rowsToPdfBuffer(rows: any[]): Promise<Buffer> {
       y -= bodyLineHeight;
     }
 
-    y -= 18; // spacing between emails
+    y -= 18;
   }
 
   footer();
@@ -339,7 +413,7 @@ async function rowsToPdfBuffer(rows: any[]): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
-async function rowsToXlsxBuffer(rows: any[]): Promise<Buffer> {
+async function rowsToXlsxBuffer(rows: Array<Record<string, unknown>>): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "ConvertMyEmail";
   wb.created = new Date();
@@ -358,29 +432,21 @@ async function rowsToXlsxBuffer(rows: any[]): Promise<Buffer> {
     { header: "Body", key: "body_text", width: 80 },
   ];
 
-  // Header styling
   const headerRow = ws.getRow(1);
   headerRow.font = { bold: true, size: 12 };
   headerRow.alignment = { vertical: "middle" };
   headerRow.height = 22;
 
-  // Add rows
   rows.forEach((r) => ws.addRow(r));
 
-  // Filters
   ws.autoFilter = {
     from: { row: 1, column: 1 },
     to: { row: 1, column: ws.columns.length },
   };
 
-  // Cell formatting
   ws.eachRow((row, rowNumber) => {
     row.eachCell((cell) => {
-      cell.alignment = {
-        vertical: "top",
-        wrapText: true,
-      };
-      // subtle borders
+      cell.alignment = { vertical: "top", wrapText: true };
       cell.border = {
         top: { style: "thin" },
         left: { style: "thin" },
@@ -389,13 +455,9 @@ async function rowsToXlsxBuffer(rows: any[]): Promise<Buffer> {
       };
     });
 
-    if (rowNumber > 1) {
-      row.height = 60; // readable spacing for body content
-    }
+    if (rowNumber > 1) row.height = 60;
   });
 
-  // Date column: keep as text but you can choose date type later
-  // (If you want true Excel dates, we can convert safely.)
   ws.getColumn("date").alignment = { vertical: "top" };
 
   const buf = await wb.xlsx.writeBuffer();
@@ -403,17 +465,15 @@ async function rowsToXlsxBuffer(rows: any[]): Promise<Buffer> {
 }
 
 async function uploadToStorage(
-  supabase: any,
+  supabase: SupabaseClient,
   path: string,
   buffer: Buffer,
   contentType: string
 ) {
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, buffer, {
-      contentType,
-      upsert: true,
-    });
+  const { error } = await supabase.storage.from(BUCKET).upload(path, buffer, {
+    contentType,
+    upsert: true,
+  });
 
   if (error) throw error;
 }
@@ -423,7 +483,6 @@ export async function POST(req: Request) {
     const url = new URL(req.url);
     const output = (url.searchParams.get("output") || "xlsx") as "xlsx" | "pdf";
 
-    // Require bearer auth (your client sends it)
     const authHeader = req.headers.get("authorization") || "";
     if (!authHeader.toLowerCase().startsWith("bearer ")) {
       return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
@@ -440,7 +499,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized. Please log in." }, { status: 401 });
     }
 
-    const gate = await checkFreeLimit(supabase, user.id);
+    const gate = await enforceUsageLimit(supabase, user.id);
     if (!gate.ok) {
       return NextResponse.json(gate.body, { status: gate.status });
     }
@@ -452,7 +511,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No files uploaded." }, { status: 400 });
     }
 
-    const parsedRows: any[] = [];
+    const parsedRows: Array<Record<string, unknown>> = [];
     const originalNames: string[] = [];
 
     for (const item of files) {
@@ -464,7 +523,7 @@ export async function POST(req: Request) {
       const buf = Buffer.from(await item.arrayBuffer());
       const parsed = await simpleParser(buf);
 
-      const baseRow = {
+      const baseRow: Record<string, unknown> = {
         file_name: item.name,
         from: parsed.from?.text || "",
         to: parsed.to?.text || "",
@@ -472,7 +531,6 @@ export async function POST(req: Request) {
         date: parsed.date ? parsed.date.toISOString() : "",
       };
 
-      // Thread splitting (creates multiple rows for one .eml when applicable)
       const chunks = splitThread(parsed.text || "");
       if (chunks.length <= 1) {
         parsedRows.push({
@@ -484,7 +542,7 @@ export async function POST(req: Request) {
           parsedRows.push({
             ...baseRow,
             subject: baseRow.subject
-              ? `${baseRow.subject} (Part ${idx + 1})`
+              ? `${String(baseRow.subject)} (Part ${idx + 1})`
               : `Thread (Part ${idx + 1})`,
             body_text: normalizeBody(chunk),
           });
@@ -496,7 +554,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No valid .eml files found." }, { status: 400 });
     }
 
-    // Create conversion row first (so we have an id for storage paths)
     const originalFilename =
       originalNames.length === 1 ? originalNames[0] : `${originalNames.length} files`;
 
@@ -508,17 +565,14 @@ export async function POST(req: Request) {
         message_count: parsedRows.length,
       })
       .select("id")
-      .single();
+      .single<ConversionRow>();
 
-    if (insertErr) {
+    if (insertErr || !conversion?.id) {
       console.error("conversion insert error", insertErr);
-      return NextResponse.json(
-        { error: "Unable to save conversion record." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Unable to save conversion record." }, { status: 500 });
     }
 
-    const conversionId = conversion.id as string;
+    const conversionId = conversion.id;
     const basePath = `${user.id}/${conversionId}`;
     const pdfPath = `${basePath}/email-records.pdf`;
     const xlsxPath = `${basePath}/converted-emails.xlsx`;
@@ -526,12 +580,8 @@ export async function POST(req: Request) {
     if (output === "pdf") {
       const pdfBuffer = await rowsToPdfBuffer(parsedRows);
 
-      // Upload + update DB
       await uploadToStorage(supabase, pdfPath, pdfBuffer, "application/pdf");
-      await supabase
-        .from("conversions")
-        .update({ pdf_path: pdfPath })
-        .eq("id", conversionId);
+      await supabase.from("conversions").update({ pdf_path: pdfPath }).eq("id", conversionId);
 
       return new NextResponse(new Uint8Array(pdfBuffer), {
         status: 200,
@@ -544,31 +594,24 @@ export async function POST(req: Request) {
 
     const xlsxBuffer = await rowsToXlsxBuffer(parsedRows);
 
-    // Upload + update DB
     await uploadToStorage(
       supabase,
       xlsxPath,
       xlsxBuffer,
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    await supabase
-      .from("conversions")
-      .update({ xlsx_path: xlsxPath })
-      .eq("id", conversionId);
+    await supabase.from("conversions").update({ xlsx_path: xlsxPath }).eq("id", conversionId);
 
     return new NextResponse(new Uint8Array(xlsxBuffer), {
       status: 200,
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
       },
     });
-  } catch (err: any) {
-    console.error("❌ convert-eml failed:", err);
-    return NextResponse.json(
-      { error: "Conversion failed.", message: err?.message ?? String(err) },
-      { status: 500 }
-    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("❌ convert-eml failed:", message);
+    return NextResponse.json({ error: "Conversion failed.", message }, { status: 500 });
   }
 }

@@ -9,6 +9,18 @@ type Conversion = {
   csv_path: string | null;
 };
 
+type HistoryResponse = {
+  conversions: Conversion[];
+};
+
+type DownloadResponse = {
+  url: string;
+};
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object";
+}
+
 export default function ConversionHistory() {
   const [items, setItems] = useState<Conversion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -18,13 +30,26 @@ export default function ConversionHistory() {
   async function load() {
     setLoading(true);
     setError(null);
+
     try {
       const res = await fetch("/api/history", { cache: "no-store" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to load history");
-      setItems(json.conversions || []);
-    } catch (e: any) {
-      setError(e?.message || "Failed to load history");
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const msg =
+          isRecord(json) && typeof json.error === "string"
+            ? json.error
+            : "Failed to load history";
+        throw new Error(msg);
+      }
+
+      const payload = (isRecord(json) ? (json as Partial<HistoryResponse>) : null) ?? null;
+      const conversions = Array.isArray(payload?.conversions) ? payload!.conversions : [];
+
+      setItems(conversions);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to load history";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -32,19 +57,43 @@ export default function ConversionHistory() {
 
   async function downloadCsv(conversion: Conversion) {
     if (!conversion.csv_path) return;
+
     setDownloadingId(conversion.id);
     setError(null);
+
     try {
       const res = await fetch("/api/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: conversion.csv_path }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to create download link");
-      window.location.href = json.url;
-    } catch (e: any) {
-      setError(e?.message || "Download failed");
+
+      const json: unknown = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const msg =
+          isRecord(json) && typeof json.error === "string"
+            ? json.error
+            : "Failed to create download link";
+        throw new Error(msg);
+      }
+
+      const url =
+        isRecord(json) && typeof json.url === "string"
+          ? json.url
+          : (isRecord(json) &&
+              isRecord((json as Record<string, unknown>)["data"]) &&
+              typeof ((json as Record<string, unknown>)["data"] as Record<string, unknown>)["url"] ===
+                "string"
+            ? (((json as Record<string, unknown>)["data"] as Record<string, unknown>)["url"] as string)
+            : null);
+
+      if (!url) throw new Error("Missing download URL");
+
+      window.location.href = (json as DownloadResponse).url ?? url;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Download failed";
+      setError(msg);
     } finally {
       setDownloadingId(null);
     }
@@ -63,11 +112,7 @@ export default function ConversionHistory() {
         </button>
       </div>
 
-      {error && (
-        <div style={{ marginTop: 12, color: "crimson" }}>
-          {error}
-        </div>
-      )}
+      {error && <div style={{ marginTop: 12, color: "crimson" }}>{error}</div>}
 
       {loading ? (
         <div style={{ marginTop: 12 }}>Loading…</div>

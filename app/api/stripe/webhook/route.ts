@@ -7,9 +7,56 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2024-12-18.acacia" as any,
 });
 
+// ✅ Live price_id → plan mapping (from your Stripe audit)
+const PRICE_ID_TO_PLAN: Record<string, "starter" | "pro" | "business"> = {
+  "price_1T5zOpEj5mdryKo2HoCYEqXj": "starter", // $9
+  "price_1T5zOlEj5mdryKo2amp3eqCE": "pro", // $19
+  "price_1T6ZytEj5mdryKo2Xezisyoq": "business", // $39
+};
+
+type Plan = "free" | "starter" | "pro" | "business";
+
+function planFromPriceId(priceId?: string | null): Plan {
+  if (!priceId) return "free";
+  return PRICE_ID_TO_PLAN[priceId] ?? "free";
+}
+
 async function rawBody(req: Request) {
   const ab = await req.arrayBuffer();
   return Buffer.from(ab);
+}
+
+async function resolvePlanFromSubscription(subscriptionId?: string | null): Promise<Plan> {
+  if (!subscriptionId) return "free";
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+      expand: ["items.data.price"],
+    });
+
+    const firstItem = sub.items?.data?.[0];
+    const priceId =
+      (firstItem?.price && typeof firstItem.price !== "string" ? firstItem.price.id : null) ??
+      null;
+
+    return planFromPriceId(priceId);
+  } catch (e: any) {
+    console.warn("[stripe:webhook] Could not retrieve subscription for plan:", e?.message);
+    return "free";
+  }
+}
+
+function shouldDemoteToFree(status?: string): boolean {
+  // Stripe statuses can include:
+  // incomplete, incomplete_expired, trialing, active, past_due, canceled, unpaid, paused
+  //
+  // Per your request: cut access immediately when not paid.
+  return (
+    status === "canceled" ||
+    status === "incomplete_expired" ||
+    status === "paused" ||
+    status === "unpaid" ||
+    status === "past_due"
+  );
 }
 
 export async function POST(req: Request) {
@@ -36,7 +83,6 @@ export async function POST(req: Request) {
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
   const { createClient } = await import("@supabase/supabase-js");
 
   const supabaseAdmin = createClient(supabaseUrl, serviceRole, {
@@ -51,7 +97,6 @@ export async function POST(req: Request) {
       const session = event.data.object as Stripe.Checkout.Session;
 
       const userId = session.metadata?.user_id;
-      const plan = session.metadata?.price_key || "free";
 
       const customerId =
         typeof session.customer === "string" ? session.customer : session.customer?.id;
@@ -61,12 +106,36 @@ export async function POST(req: Request) {
           ? session.subscription
           : session.subscription?.id;
 
+      // Prefer metadata if you set it, otherwise derive from subscription items (more reliable)
+      const metadataPlan = (session.metadata?.price_key as Plan | undefined) ?? undefined;
+      const plan: Plan =
+        metadataPlan && metadataPlan !== "free"
+          ? metadataPlan
+          : await resolvePlanFromSubscription(subscriptionId ?? null);
+
+      // ✅ For billing-cycle usage windows, pull period start/end from the subscription now
+      let periodStartIso: string | null = null;
+      let periodEndIso: string | null = null;
+      try {
+        if (subscriptionId) {
+          const sub = await stripe.subscriptions.retrieve(subscriptionId);
+          const ps = (sub as any).current_period_start as number | undefined;
+          const pe = (sub as any).current_period_end as number | undefined;
+          periodStartIso = ps ? new Date(ps * 1000).toISOString() : null;
+          periodEndIso = pe ? new Date(pe * 1000).toISOString() : null;
+        }
+      } catch (e: any) {
+        console.warn("[stripe:webhook] Could not retrieve subscription period window:", e?.message);
+      }
+
       console.log("[stripe:webhook] checkout.session.completed:", {
         userId,
         plan,
         customerId,
         subscriptionId,
         metadata: session.metadata,
+        periodStartIso,
+        periodEndIso,
       });
 
       if (userId && subscriptionId) {
@@ -76,7 +145,8 @@ export async function POST(req: Request) {
           stripe_subscription_id: subscriptionId,
           plan,
           status: "active",
-          current_period_end: null,
+          current_period_start: periodStartIso,
+          current_period_end: periodEndIso,
           updated_at: new Date().toISOString(),
         });
 
@@ -101,24 +171,39 @@ export async function POST(req: Request) {
     ) {
       const sub = event.data.object as Stripe.Subscription;
 
-      const subscriptionId = (sub as any).id;
-      const customerId =
-        typeof (sub as any).customer === "string"
-          ? (sub as any).customer
-          : (sub as any).customer?.id;
+      const subscriptionId = sub.id;
+      const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
+
+      // typings-safe reads
+      const status = (sub as any).status as string | undefined;
+
+      // Derive plan from subscription item price_id (most reliable)
+      const priceId = (sub as any).items?.data?.[0]?.price?.id as string | undefined;
+      const derivedPlan = planFromPriceId(priceId ?? null);
+
+      // ✅ Billing-cycle window (store BOTH start & end)
+      const periodStartUnix = (sub as any).current_period_start as number | undefined;
+      const periodEndUnix = (sub as any).current_period_end as number | undefined;
+
+      const cancelAtPeriodEnd = (sub as any).cancel_at_period_end as boolean | undefined;
+      const endedAtUnix = (sub as any).ended_at as number | undefined;
 
       console.log("[stripe:webhook] Subscription lifecycle event:", {
         subscriptionId,
         customerId,
-        status: (sub as any).status,
+        status,
+        priceId,
+        derivedPlan,
+        periodStartUnix,
+        periodEndUnix,
+        cancelAtPeriodEnd,
+        endedAtUnix,
       });
 
       const { data: row, error: selectError } = await supabaseAdmin
         .from("subscriptions")
         .select("user_id, plan")
-        .or(
-          `stripe_subscription_id.eq.${subscriptionId},stripe_customer_id.eq.${customerId}`
-        )
+        .or(`stripe_subscription_id.eq.${subscriptionId},stripe_customer_id.eq.${customerId}`)
         .maybeSingle();
 
       if (selectError) {
@@ -127,23 +212,22 @@ export async function POST(req: Request) {
       }
 
       if (row?.user_id) {
-        const status = (sub as any).status;
-        const isActive = status === "active" || status === "trialing";
-        const periodEndUnix = (sub as any).current_period_end as number | undefined;
+        // If not paid / ended, demote to free. Otherwise keep entitlement.
+        const demote = shouldDemoteToFree(status);
+        const planToPersist: Plan = demote ? "free" : derivedPlan;
 
-        const { error: updateError } = await supabaseAdmin
-          .from("subscriptions")
-          .upsert({
-            user_id: row.user_id,
-            stripe_customer_id: customerId ?? null,
-            stripe_subscription_id: subscriptionId,
-            status,
-            plan: isActive ? row.plan : "free",
-            current_period_end: periodEndUnix
-              ? new Date(periodEndUnix * 1000).toISOString()
-              : null,
-            updated_at: new Date().toISOString(),
-          });
+        const { error: updateError } = await supabaseAdmin.from("subscriptions").upsert({
+          user_id: row.user_id,
+          stripe_customer_id: customerId ?? null,
+          stripe_subscription_id: subscriptionId,
+          status: status ?? "unknown",
+          plan: planToPersist,
+          current_period_start: periodStartUnix
+            ? new Date(periodStartUnix * 1000).toISOString()
+            : null,
+          current_period_end: periodEndUnix ? new Date(periodEndUnix * 1000).toISOString() : null,
+          updated_at: new Date().toISOString(),
+        });
 
         if (updateError) {
           console.error("[stripe:webhook] Subscription update FAILED:", updateError);
