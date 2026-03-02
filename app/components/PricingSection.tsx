@@ -1,30 +1,39 @@
 import Link from "next/link";
 
 export default function PricingSection({ loginHref }: { loginHref: string }) {
+  const starterRaw = process.env.NEXT_PUBLIC_STARTER_PRICE_DISPLAY || "9";
+  const proRaw = process.env.NEXT_PUBLIC_PRO_PRICE_DISPLAY || "19";
+  const businessRaw = process.env.NEXT_PUBLIC_BUSINESS_PRICE_DISPLAY || "39";
+
+  const starterPrice = starterRaw.startsWith("$") ? starterRaw : `$${starterRaw}`;
+  const proPrice = proRaw.startsWith("$") ? proRaw : `$${proRaw}`;
+  const businessPrice = businessRaw.startsWith("$") ? businessRaw : `$${businessRaw}`;
+
+  const withPlan = (plan: string) =>
+    `${loginHref}${loginHref.includes("?") ? "&" : "?"}plan=${encodeURIComponent(plan)}`;
+
   return (
     <section className="mx-auto max-w-6xl px-6 py-16" id="pricing">
       <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-end">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Pricing</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600">
-            Start free. Upgrade when you need more conversions and longer history.
+            Start free. Upgrade when you need more conversions.
           </p>
         </div>
 
-        <div className="text-xs text-gray-500">
-          Monthly plans • Cancel anytime
-        </div>
+        <div className="text-xs text-gray-500">Monthly plans • Cancel anytime</div>
       </div>
 
-      <div className="mt-8 grid gap-4 md:grid-cols-3">
+      <div className="mt-8 grid gap-4 md:grid-cols-4">
         {/* Free */}
         <PlanCard
           name="Free"
           price="$0"
-          period="/mo"
-          description="Try Convert My Email with a small free allowance."
+          period=""
+          description="Try ConvertMyEmail with a small free allowance."
           features={[
-            "3 conversions total (free)",
+            "3 lifetime conversions",
             "Excel + PDF exports",
             "Thread splitting included",
             "Basic history",
@@ -36,23 +45,23 @@ export default function PricingSection({ loginHref }: { loginHref: string }) {
           }}
         />
 
-        {/* Starter (Most Popular) */}
+        {/* Starter */}
         <PlanCard
           name="Starter"
-          price="$9"
+          price={starterPrice}
           period="/mo"
-          description="Best for professionals who convert regularly."
-          badge="Most Popular"
+          description="For occasional use."
+          badge="Popular"
           emphasized
           features={[
-            "100 conversions / month",
+            "20 conversions / month",
             "Excel + PDF + CSV exports",
-            "Conversion history: 30 days",
-            "Priority processing",
+            "Conversion history",
+            "Priority improvements",
           ]}
           cta={{
-            label: "Upgrade to Starter",
-            href: `${loginHref}${loginHref.includes("?") ? "&" : "?"}plan=starter`,
+            label: "Choose Starter",
+            href: withPlan("starter"),
             variant: "primary",
           }}
         />
@@ -60,26 +69,45 @@ export default function PricingSection({ loginHref }: { loginHref: string }) {
         {/* Pro */}
         <PlanCard
           name="Pro"
-          price="$19"
+          price={proPrice}
           period="/mo"
-          description="For heavy usage and longer retention."
+          description="For ongoing work."
           features={[
-            "500 conversions / month",
+            "75 conversions / month",
             "Excel + PDF + CSV exports",
-            "Conversion history: 1 year",
-            "Priority support",
+            "Conversion history",
+            "Priority improvements",
           ]}
           cta={{
-            label: "Upgrade to Pro",
-            href: `${loginHref}${loginHref.includes("?") ? "&" : "?"}plan=pro`,
+            label: "Choose Pro",
+            href: withPlan("pro"),
+            variant: "secondary",
+          }}
+        />
+
+        {/* Business */}
+        <PlanCard
+          name="Business"
+          price={businessPrice}
+          period="/mo"
+          description="For high volume."
+          features={[
+            "Unlimited conversions",
+            "Excel + PDF + CSV exports",
+            "Conversion history",
+            "Priority improvements",
+          ]}
+          cta={{
+            label: "Choose Business",
+            href: withPlan("business"),
             variant: "secondary",
           }}
         />
       </div>
 
       <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-6 text-sm text-gray-700">
-        <span className="font-semibold text-gray-900">Note:</span> You can upgrade any time.
-        We’ll wire these buttons to Stripe Checkout next.
+        <span className="font-semibold text-gray-900">Note:</span> You can upgrade any time from
+        your dashboard.
       </div>
     </section>
   );
@@ -122,7 +150,7 @@ function PlanCard({
           <div className="text-sm font-semibold text-gray-900">{name}</div>
           <div className="mt-2 flex items-baseline gap-1">
             <div className="text-3xl font-semibold tracking-tight">{price}</div>
-            <div className="text-sm text-gray-500">{period}</div>
+            {period ? <div className="text-sm text-gray-500">{period}</div> : null}
           </div>
         </div>
       </div>

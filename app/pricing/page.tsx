@@ -4,13 +4,7 @@ import SiteHeader from "@/app/components/siteheader";
 
 type SP = { next?: string };
 
-function Price({
-  amount,
-  period = "/mo",
-}: {
-  amount: string;
-  period?: string;
-}) {
+function Price({ amount, period = "/mo" }: { amount: string; period?: string }) {
   return (
     <div className="mt-3 flex items-end gap-2">
       <div className="text-4xl font-semibold tracking-tight">{amount}</div>
@@ -97,12 +91,15 @@ export default async function PricingPage({
   const next = sp?.next ? encodeURIComponent(sp.next) : "";
   const loginHref = next ? `/login?next=${next}` : "/login";
 
-  // You can control display text via envs (optional).
-  // If you already know the exact amounts, set these in Vercel env:
-  // NEXT_PUBLIC_STARTER_PRICE_DISPLAY="$9"
-  // NEXT_PUBLIC_PRO_PRICE_DISPLAY="$19"
-  const starterPrice = process.env.NEXT_PUBLIC_STARTER_PRICE_DISPLAY || "$9";
-  const proPrice = process.env.NEXT_PUBLIC_PRO_PRICE_DISPLAY || "$19";
+  // Display prices (frontend only)
+  // Prefer numeric envs; fall back to "$9" style strings.
+  const starterRaw = process.env.NEXT_PUBLIC_STARTER_PRICE_DISPLAY || "9";
+  const proRaw = process.env.NEXT_PUBLIC_PRO_PRICE_DISPLAY || "19";
+  const businessRaw = process.env.NEXT_PUBLIC_BUSINESS_PRICE_DISPLAY || "39";
+
+  const starterPrice = starterRaw.startsWith("$") ? starterRaw : `$${starterRaw}`;
+  const proPrice = proRaw.startsWith("$") ? proRaw : `$${proRaw}`;
+  const businessPrice = businessRaw.startsWith("$") ? businessRaw : `$${businessRaw}`;
 
   return (
     <main className="min-h-screen bg-white text-gray-900">
@@ -114,7 +111,7 @@ export default async function PricingPage({
           Start free. Upgrade when you need more conversions or ongoing work.
         </p>
 
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
+        <div className="mt-10 grid gap-4 md:grid-cols-4">
           <TierCard
             name="Free"
             tagline="Great for trying it out"
@@ -136,7 +133,7 @@ export default async function PricingPage({
             price={starterPrice}
             period="/mo"
             bullets={[
-              "50 conversions / month",
+              "20 conversions / month",
               "Excel + PDF exports",
               "Thread message extraction",
               "Download history",
@@ -151,7 +148,7 @@ export default async function PricingPage({
             price={proPrice}
             period="/mo"
             bullets={[
-              "Unlimited conversions",
+              "75 conversions / month",
               "Excel + PDF exports",
               "Thread message extraction",
               "Priority improvements",
@@ -160,6 +157,21 @@ export default async function PricingPage({
             ctaLabel="Choose Pro"
             featured
             badge="Most popular"
+          />
+
+          <TierCard
+            name="Business"
+            tagline="For high volume"
+            price={businessPrice}
+            period="/mo"
+            bullets={[
+              "Unlimited conversions",
+              "Excel + PDF exports",
+              "Thread message extraction",
+              "Priority improvements",
+            ]}
+            ctaHref="/app?plan=business"
+            ctaLabel="Choose Business"
           />
         </div>
 

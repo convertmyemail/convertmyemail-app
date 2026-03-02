@@ -6,27 +6,42 @@ import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export const runtime = "nodejs";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: "2024-12-18.acacia" as any,
+});
 
-export async function POST() {
+type Plan = "starter" | "pro" | "business";
+
+const PRICE_ID_BY_PLAN: Record<Plan, string> = {
+  starter: process.env.STRIPE_STARTER_PRICE_ID!,
+  pro: process.env.STRIPE_PRO_PRICE_ID!,
+  business: process.env.STRIPE_BUSINESS_PRICE_ID!,
+};
+
+export async function POST(req: Request) {
   try {
     if (!process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json({ error: "STRIPE_SECRET_KEY missing" }, { status: 500 });
     }
 
-    const PRICE_ID = process.env.PRICE_ID_PRO;
-    const APP_URL = process.env.APP_URL;
+    const { plan } = (await req.json()) as { plan: Plan };
 
-    if (!PRICE_ID) {
-      return NextResponse.json({ error: "PRICE_ID_PRO missing" }, { status: 500 });
-    }
-    if (!APP_URL) {
-      return NextResponse.json({ error: "APP_URL missing" }, { status: 500 });
+    if (!plan || !(plan in PRICE_ID_BY_PLAN)) {
+      return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
     }
 
-    // ✅ Get authenticated user
-    const cookieStore = await cookies();
-    const supabase = createSupabaseServerClient(cookieStore);
+    const priceId = PRICE_ID_BY_PLAN[plan];
+    if (!priceId) {
+      return NextResponse.json({ error: `Missing price id for plan: ${plan}` }, { status: 500 });
+    }
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+
+    // Ensure request cookies are available in this route context
+    await cookies();
+
+    // ✅ Your helper returns a Promise in this codebase
+    const supabase = await createSupabaseServerClient();
 
     const { data: userData, error: userErr } = await supabase.auth.getUser();
     if (userErr || !userData?.user) {
@@ -38,16 +53,20 @@ export async function POST() {
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
+      payment_method_types: ["card"],
       customer_email: userEmail,
-      line_items: [{ price: PRICE_ID, quantity: 1 }],
-      success_url: `${APP_URL}/app?checkout=success`,
-      cancel_url: `${APP_URL}/app`,
-      metadata: { user_id: userId }, // 🔥 link back in webhook
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${siteUrl}/app?checkout=success`,
+      cancel_url: `${siteUrl}/pricing?checkout=canceled`,
+      metadata: {
+        user_id: userId,
+        price_key: plan, // helps webhook resolve plan
+      },
     });
 
     return NextResponse.json({ url: session.url });
   } catch (err: any) {
-    console.error("stripe checkout session error", err);
+    console.error("[create-checkout-session] error:", err);
     return NextResponse.json({ error: err?.message || "Stripe error" }, { status: 500 });
   }
 }
