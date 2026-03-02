@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 
 type Props = {
@@ -31,6 +32,33 @@ function NavLink({
   );
 }
 
+function BrandMark({ size = 32 }: { size?: number }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center overflow-hidden rounded-xl"
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <Image
+        src="/icon-light.png"
+        alt=""
+        width={size}
+        height={size}
+        priority
+        className="block h-full w-full object-contain dark:hidden"
+      />
+      <Image
+        src="/icon-dark.png"
+        alt=""
+        width={size}
+        height={size}
+        priority
+        className="hidden h-full w-full object-contain dark:block"
+      />
+    </span>
+  );
+}
+
 export default function SiteHeader({ variant = "marketing" }: Props) {
   const pathname = usePathname();
   const isDashboard = pathname?.startsWith("/app");
@@ -42,14 +70,12 @@ export default function SiteHeader({ variant = "marketing" }: Props) {
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link href="/" className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-xl bg-gray-900" />
+          <BrandMark size={32} />
           <div className="leading-tight">
             <div className="text-sm font-semibold tracking-tight text-gray-900">
               Convert My Email
             </div>
-            <div className="mt-0.5 text-xs text-gray-500">
-              Professional conversions
-            </div>
+            <div className="mt-0.5 text-xs text-gray-500">Professional conversions</div>
           </div>
         </Link>
 
