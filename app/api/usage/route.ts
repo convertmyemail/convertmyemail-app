@@ -26,10 +26,46 @@ function asDate(value: any): Date | null {
   return null;
 }
 
+type PlanKey = "free" | "starter" | "pro" | "business";
+
+function normalizePlan(raw: any): PlanKey {
+  const p = String(raw || "").toLowerCase();
+  if (p === "starter" || p === "pro" || p === "business" || p === "free") return p;
+  return "free";
+}
+
+function displayPlan(plan: PlanKey): "Free" | "Starter" | "Pro" | "Business" {
+  switch (plan) {
+    case "starter":
+      return "Starter";
+    case "pro":
+      return "Pro";
+    case "business":
+      return "Business";
+    default:
+      return "Free";
+  }
+}
+
+function limitFor(plan: PlanKey): number | null {
+  switch (plan) {
+    case "free":
+      return FREE_LIMIT; // lifetime
+    case "starter":
+      return 20; // per billing cycle
+    case "pro":
+      return 75; // per billing cycle
+    case "business":
+      return null; // unlimited
+  }
+}
+
 export async function GET() {
   try {
-    const cookieStore = await Promise.resolve(cookies() as any);
-    const supabase = createSupabaseServerClient(cookieStore);
+    // Bind cookies to request context (cookie-based auth)
+    await cookies();
+
+    const supabase = await createSupabaseServerClient();
 
     const {
       data: { user },
@@ -40,37 +76,18 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 1) Pull conversions used
-    const { count, error: countErr } = await supabase
-      .from("conversions")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id);
-
-    if (countErr) {
-      console.error("usage: count conversions failed", countErr);
-      return NextResponse.json({
-        plan: "Free",
-        used: 0,
-        remaining: FREE_LIMIT,
-        free_limit: FREE_LIMIT,
-        status: "unknown",
-        isPaid: false,
-      });
-    }
-
-    const used = count ?? 0;
-
-    // 2) Subscription check (fail-open)
-    let isPro = false;
+    // 1) Get latest subscription snapshot (fail-open to Free)
+    let planKey: PlanKey = "free";
     let status = "free";
-    let plan: string = "Free";
+    let isPaid = false;
+
+    let periodStart: Date | null = null;
+    let periodEnd: Date | null = null;
 
     try {
-      // ✅ Match your real columns:
-      // user_id, stripe_customer_id, stripe_subscription_id, plan, status, current_period_end, updated_at
       const { data: sub, error: subErr } = await supabase
         .from("subscriptions")
-        .select("status, plan, current_period_end, updated_at")
+        .select("status, plan, current_period_start, current_period_end, updated_at")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(1)
@@ -80,41 +97,72 @@ export async function GET() {
         console.warn("usage: subscription lookup error (fail-open):", subErr);
       } else if (sub) {
         const rawStatus = String((sub as any).status ?? "").toLowerCase();
-        const rawPlan = String((sub as any).plan ?? "").toLowerCase();
+        const rawPlan = normalizePlan((sub as any).plan);
 
-        const periodEnd = asDate((sub as any).current_period_end);
+        periodStart = asDate((sub as any).current_period_start);
+        periodEnd = asDate((sub as any).current_period_end);
 
         const active = rawStatus === "active" || rawStatus === "trialing";
-
-        // ✅ If period end is missing but status is active/trialing, treat as Pro (fail-open)
         const notExpired = !periodEnd || periodEnd.getTime() > Date.now();
 
-        isPro = active && notExpired;
-        status = rawStatus || (isPro ? "active" : "free");
+        // paid only if active + not expired + not free
+        isPaid = active && notExpired && rawPlan !== "free";
+        status = rawStatus || (isPaid ? "active" : "free");
 
-        // Prefer plan value if present, otherwise derive from isPro
-        if (rawPlan) {
-          plan = rawPlan === "pro" || rawPlan === "starter" ? "Pro" : rawPlan;
-        } else {
-          plan = isPro ? "Pro" : "Free";
-        }
+        planKey = isPaid ? rawPlan : "free";
       }
     } catch (e) {
       console.warn("usage: subscription verify threw (fail-open):", e);
-      isPro = false;
+      planKey = "free";
       status = "free";
-      plan = "Free";
+      isPaid = false;
+      periodStart = null;
+      periodEnd = null;
     }
 
-    const remaining = isPro ? null : Math.max(0, FREE_LIMIT - used);
+    // 2) Count conversions used
+    // Free: lifetime count
+    // Paid: count within billing window if we have a periodStart; otherwise fail-open to lifetime (still okay for UI)
+    let used = 0;
+
+    try {
+      let q = supabase.from("conversions").select("id", { count: "exact", head: true }).eq("user_id", user.id);
+
+      if (isPaid && periodStart) {
+        // conversions.created_at is assumed to be ISO timestamp
+        q = q.gte("created_at", periodStart.toISOString());
+        if (periodEnd) q = q.lt("created_at", periodEnd.toISOString());
+      }
+
+      const { count, error: countErr } = await q;
+
+      if (countErr) {
+        console.error("usage: count conversions failed", countErr);
+        // fail-open
+        used = 0;
+      } else {
+        used = count ?? 0;
+      }
+    } catch (e) {
+      console.error("usage: count threw", e);
+      used = 0;
+    }
+
+    const limit = limitFor(planKey);
+
+    const remaining =
+      limit === null ? null : Math.max(0, limit - used);
 
     return NextResponse.json({
-      plan,
-      used,
-      remaining,
+      plan: displayPlan(planKey),     // "Free" | "Starter" | "Pro" | "Business"
+      used,                           // number used in window (paid) or lifetime (free)
+      remaining,                      // null for unlimited, number otherwise
       free_limit: FREE_LIMIT,
+      limit,                          // helpful for UI/debug
       status,
-      isPaid: isPro,
+      isPaid,                         // true for starter/pro/business when active
+      current_period_start: periodStart ? periodStart.toISOString() : null,
+      current_period_end: periodEnd ? periodEnd.toISOString() : null,
     });
   } catch (err) {
     console.error("usage route failed (fail-open):", err);
@@ -123,8 +171,11 @@ export async function GET() {
       used: 0,
       remaining: FREE_LIMIT,
       free_limit: FREE_LIMIT,
+      limit: FREE_LIMIT,
       status: "unknown",
       isPaid: false,
+      current_period_start: null,
+      current_period_end: null,
     });
   }
 }

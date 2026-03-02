@@ -49,9 +49,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Missing or invalid id/kind" }, { status: 400 });
   }
 
-  // ✅ FIX: cookies() is async in your setup
-  const cookieStore = await cookies();
-  const supabase = createSupabaseServerClient(cookieStore);
+  // ✅ Bind cookies to request context (cookie-based auth)
+  await cookies();
+
+  // ✅ Your helper returns a Promise and takes 0 args in this codebase
+  const supabase = await createSupabaseServerClient();
 
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   const user = userData?.user;

@@ -5,8 +5,10 @@ import { createSupabaseServerClient } from "@/lib/supabaseServer";
 export const runtime = "nodejs";
 
 export async function GET() {
-  const cookieStore = await cookies(); // ✅ Proper async usage
-  const supabase = createSupabaseServerClient(cookieStore);
+  // ✅ Bind cookies to request context (cookie-based auth)
+  await cookies();
+
+  const supabase = await createSupabaseServerClient();
 
   const { data: userData, error: userErr } = await supabase.auth.getUser();
 

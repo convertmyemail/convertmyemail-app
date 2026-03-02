@@ -24,7 +24,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "STRIPE_SECRET_KEY missing" }, { status: 500 });
     }
 
-    const { plan } = (await req.json()) as { plan: Plan };
+    const body = (await req.json()) as any;
+    const plan = (body?.plan ?? body?.priceKey) as Plan;
 
     if (!plan || !(plan in PRICE_ID_BY_PLAN)) {
       return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
@@ -32,7 +33,10 @@ export async function POST(req: Request) {
 
     const priceId = PRICE_ID_BY_PLAN[plan];
     if (!priceId) {
-      return NextResponse.json({ error: `Missing price id for plan: ${plan}` }, { status: 500 });
+      return NextResponse.json(
+        { error: `Missing price id for plan: ${plan}` },
+        { status: 500 }
+      );
     }
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
@@ -40,7 +44,6 @@ export async function POST(req: Request) {
     // Ensure request cookies are available in this route context
     await cookies();
 
-    // ✅ Your helper returns a Promise in this codebase
     const supabase = await createSupabaseServerClient();
 
     const { data: userData, error: userErr } = await supabase.auth.getUser();
@@ -51,11 +54,25 @@ export async function POST(req: Request) {
     const userId = userData.user.id;
     const userEmail = userData.user.email ?? undefined;
 
+    // Reuse existing Stripe customer if we have one
+    const { data: subRow, error: subErr } = await supabase
+      .from("subscriptions")
+      .select("stripe_customer_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (subErr) {
+      return NextResponse.json({ error: subErr.message }, { status: 500 });
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
-      customer_email: userEmail,
       line_items: [{ price: priceId, quantity: 1 }],
+
+      ...(subRow?.stripe_customer_id ? { customer: subRow.stripe_customer_id } : {}),
+      customer_email: subRow?.stripe_customer_id ? undefined : userEmail,
+
       success_url: `${siteUrl}/app?checkout=success`,
       cancel_url: `${siteUrl}/pricing?checkout=canceled`,
       metadata: {
