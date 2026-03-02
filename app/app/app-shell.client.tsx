@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/browser";
@@ -54,13 +55,20 @@ function normalizeUsage(input: any): Usage {
 
   const plan = String(input.plan ?? "Free");
   const free_limit =
-    typeof input.free_limit === "number" ? input.free_limit : typeof input.limit === "number" ? input.limit : 3;
+    typeof input.free_limit === "number"
+      ? input.free_limit
+      : typeof input.limit === "number"
+      ? input.limit
+      : 3;
 
   const used = typeof input.used === "number" ? input.used : 0;
 
-  // remaining can be null for unlimited
   const remaining =
-    input.remaining === null ? null : typeof input.remaining === "number" ? input.remaining : Math.max(0, free_limit - used);
+    input.remaining === null
+      ? null
+      : typeof input.remaining === "number"
+      ? input.remaining
+      : Math.max(0, free_limit - used);
 
   return {
     plan,
@@ -73,17 +81,37 @@ function normalizeUsage(input: any): Usage {
   };
 }
 
+function BrandMark({ size = 36 }: { size?: number }) {
+  // Uses /app/icon-light.png and /app/icon-dark.png at runtime (public root: /icon-light.png)
+  return (
+    <div className="relative" style={{ width: size, height: size }}>
+      <Image
+        src="/icon-light.png"
+        alt="ConvertMyEmail"
+        fill
+        priority
+        className="rounded-xl object-contain dark:hidden"
+      />
+      <Image
+        src="/icon-dark.png"
+        alt="ConvertMyEmail"
+        fill
+        priority
+        className="hidden rounded-xl object-contain dark:block"
+      />
+    </div>
+  );
+}
+
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Prevent duplicate Stripe redirect attempts
   const checkoutStartedRef = useRef(false);
 
   const [usage, setUsage] = useState<Usage | null>(null);
   const [usageLoading, setUsageLoading] = useState(true);
 
-  // ✅ Helper: get Authorization header if we have a session (works even if cookies are flaky)
   const getAuthHeaders = async (): Promise<Record<string, string> | undefined> => {
     const {
       data: { session },
@@ -108,7 +136,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       const json = await res.json().catch(() => null);
 
-      // ✅ FAIL-OPEN: if usage endpoint errors, do not throw; fall back to Free
       if (!res.ok) {
         console.warn("usage: non-OK response", res.status, json);
         setUsage(normalizeUsage(json) ?? FALLBACK_FREE);
@@ -117,7 +144,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       setUsage(normalizeUsage(json));
     } catch (e) {
-      // ✅ FAIL-OPEN: network error, parsing error, etc.
       console.warn("usage load error (fail-open)", e);
       setUsage(FALLBACK_FREE);
     } finally {
@@ -130,10 +156,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Prefer explicit booleans if your API returns them
   const explicitIsPro =
-    (usage?.isPaid === true) ||
-    (typeof usage?.status === "string" && ["active", "trialing"].includes(usage.status.toLowerCase()));
+    usage?.isPaid === true ||
+    (typeof usage?.status === "string" &&
+      ["active", "trialing"].includes(usage.status.toLowerCase()));
 
   const normalizedPlan = String(usage?.plan || "Free").toLowerCase();
   const isPro = explicitIsPro || normalizedPlan === "pro" || normalizedPlan === "starter";
@@ -172,7 +198,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       if (!res.ok) throw new Error(data?.error || "Could not start checkout");
 
       if (data?.url) {
-        // Optional: refresh usage just before leaving (won't always matter)
         refreshUsage().catch(() => {});
         window.location.href = data.url;
         return;
@@ -213,16 +238,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex min-h-screen">
           {/* Sidebar */}
           <aside className="hidden w-64 border-r border-gray-200 bg-white md:flex md:flex-col">
-            {/* Logo goes to Home */}
+            {/* Brand */}
             <div className="px-6 py-5">
               <Link
                 href="/"
-                className="block rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+                className="flex items-center gap-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
               >
-                <div className="text-sm font-semibold tracking-tight hover:opacity-90">
-                  Convert My Email
+                <BrandMark size={36} />
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold tracking-tight hover:opacity-90">
+                    Convert My Email
+                  </div>
+                  <div className="mt-1 text-xs text-gray-500">Professional conversions</div>
                 </div>
-                <div className="mt-1 text-xs text-gray-500">Professional conversions</div>
               </Link>
             </div>
 
@@ -257,9 +285,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
+                    {/* Mobile brand mark (shows even when sidebar hidden) */}
+                    <div className="md:hidden">
+                      <Link href="/" className="inline-flex items-center gap-2">
+                        <BrandMark size={28} />
+                      </Link>
+                    </div>
+
                     <div className="text-sm font-semibold">{title}</div>
 
-                    {/* Plan badge */}
                     {showUsage && (
                       <span
                         className={[
@@ -274,7 +308,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       </span>
                     )}
 
-                    {/* Subtle usage counter */}
                     {showUsage && !isPro && usage?.remaining !== null && (
                       <span className="text-xs text-gray-500">
                         {usage.used} used —{" "}
@@ -293,7 +326,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* Home button */}
                   <Link
                     href="/"
                     className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
@@ -301,7 +333,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     Home
                   </Link>
 
-                  {/* Upgrade button in header */}
                   {!isPro && (
                     <button
                       className="hidden sm:inline-flex rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black"
