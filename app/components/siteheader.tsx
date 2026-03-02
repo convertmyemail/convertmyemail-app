@@ -32,7 +32,7 @@ function NavLink({
   );
 }
 
-function BrandMark({ size = 36 }: { size?: number }) {
+function BrandMark({ size = 44 }: { size?: number }) {
   return (
     <span
       className="inline-flex items-center justify-center overflow-hidden rounded-xl"
