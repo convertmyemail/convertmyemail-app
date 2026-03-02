@@ -82,24 +82,30 @@ function normalizeUsage(input: any): Usage {
 }
 
 function BrandMark({ size = 36 }: { size?: number }) {
-  // Uses /app/icon-light.png and /app/icon-dark.png at runtime (public root: /icon-light.png)
+  // Uses public-root icons: /icon-light.png and /icon-dark.png
   return (
-    <div className="relative" style={{ width: size, height: size }}>
+    <span
+      className="inline-flex items-center justify-center overflow-hidden rounded-xl"
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
       <Image
         src="/icon-light.png"
-        alt="ConvertMyEmail"
-        fill
+        alt=""
+        width={size}
+        height={size}
         priority
-        className="rounded-xl object-contain dark:hidden"
+        className="block h-full w-full object-contain dark:hidden"
       />
       <Image
         src="/icon-dark.png"
-        alt="ConvertMyEmail"
-        fill
+        alt=""
+        width={size}
+        height={size}
         priority
-        className="hidden rounded-xl object-contain dark:block"
+        className="hidden h-full w-full object-contain dark:block"
       />
-    </div>
+    </span>
   );
 }
 
@@ -242,9 +248,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="px-6 py-5">
               <Link
                 href="/"
-                className="flex items-center gap-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
+                className="flex items-center gap-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-300"
               >
-                <BrandMark size={36} />
+                <BrandMark size={32} />
                 <div className="min-w-0">
                   <div className="text-sm font-semibold tracking-tight hover:opacity-90">
                     Convert My Email
