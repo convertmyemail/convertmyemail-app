@@ -37,23 +37,22 @@ function BrandMark({ size = 44 }: { size?: number }) {
     <span
       className="inline-flex items-center justify-center overflow-hidden rounded-xl"
       style={{ width: size, height: size }}
-      aria-hidden="true"
     >
       <Image
         src="/icon-light.png"
-        alt=""
-        width={size}
-        height={size}
+        alt="Convert My Email"
+        fill
         priority
-        className="block h-full w-full object-contain dark:hidden"
+        sizes={`${size}px`}
+        className="object-contain dark:hidden"
       />
       <Image
         src="/icon-dark.png"
-        alt=""
-        width={size}
-        height={size}
+        alt="Convert My Email"
+        fill
         priority
-        className="hidden h-full w-full object-contain dark:block"
+        sizes={`${size}px`}
+        className="object-contain hidden dark:block"
       />
     </span>
   );
