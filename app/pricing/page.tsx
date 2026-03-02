@@ -2,128 +2,180 @@
 import Link from "next/link";
 import SiteHeader from "@/app/components/siteheader";
 
-export const dynamic = "force-dynamic";
+type SP = { next?: string };
 
-export default function PricingPage() {
+function Price({
+  amount,
+  period = "/mo",
+}: {
+  amount: string;
+  period?: string;
+}) {
+  return (
+    <div className="mt-3 flex items-end gap-2">
+      <div className="text-4xl font-semibold tracking-tight">{amount}</div>
+      {period ? <div className="pb-1 text-sm text-gray-500">{period}</div> : null}
+    </div>
+  );
+}
+
+function TierCard({
+  name,
+  tagline,
+  price,
+  period,
+  bullets,
+  ctaHref,
+  ctaLabel,
+  featured,
+  badge,
+}: {
+  name: string;
+  tagline: string;
+  price: string;
+  period?: string;
+  bullets: string[];
+  ctaHref: string;
+  ctaLabel: string;
+  featured?: boolean;
+  badge?: string;
+}) {
+  return (
+    <div
+      className={[
+        "rounded-2xl border bg-white p-6 shadow-sm",
+        featured ? "border-gray-900 shadow" : "border-gray-200",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">{name}</div>
+          <div className="mt-1 text-sm text-gray-600">{tagline}</div>
+        </div>
+
+        {badge ? (
+          <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-800">
+            {badge}
+          </span>
+        ) : null}
+      </div>
+
+      <Price amount={price} period={period} />
+
+      <ul className="mt-5 space-y-2 text-sm text-gray-700">
+        {bullets.map((b) => (
+          <li key={b} className="flex gap-2">
+            <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-gray-400" />
+            <span>{b}</span>
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-6">
+        <Link
+          href={ctaHref}
+          className={[
+            "inline-flex w-full items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold",
+            featured
+              ? "bg-gray-900 text-white hover:bg-black"
+              : "border border-gray-300 bg-white text-gray-900 hover:bg-gray-50",
+          ].join(" ")}
+        >
+          {ctaLabel}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+export default async function PricingPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SP> | SP;
+}) {
+  const sp = (await Promise.resolve(searchParams)) || {};
+  const next = sp?.next ? encodeURIComponent(sp.next) : "";
+  const loginHref = next ? `/login?next=${next}` : "/login";
+
+  // You can control display text via envs (optional).
+  // If you already know the exact amounts, set these in Vercel env:
+  // NEXT_PUBLIC_STARTER_PRICE_DISPLAY="$9"
+  // NEXT_PUBLIC_PRO_PRICE_DISPLAY="$19"
+  const starterPrice = process.env.NEXT_PUBLIC_STARTER_PRICE_DISPLAY || "$9";
+  const proPrice = process.env.NEXT_PUBLIC_PRO_PRICE_DISPLAY || "$19";
+
   return (
     <main className="min-h-screen bg-white text-gray-900">
       <SiteHeader variant="marketing" />
 
-      <section className="mx-auto max-w-6xl px-6 py-14">
-        <h1 className="text-3xl font-semibold tracking-tight">Pricing</h1>
-        <p className="mt-3 max-w-2xl text-base leading-7 text-gray-600">
-          Start free. Upgrade when you need unlimited conversions.
+      <section className="mx-auto max-w-6xl px-6 pt-14 pb-10 md:pt-20">
+        <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">Pricing</h1>
+        <p className="mt-2 text-sm leading-6 text-gray-600">
+          Start free. Upgrade when you need more conversions or ongoing work.
         </p>
 
-        <div className="mt-10 grid gap-6 md:grid-cols-2">
-          <Plan
-            title="Free"
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
+          <TierCard
+            name="Free"
+            tagline="Great for trying it out"
             price="$0"
-            subtitle="Great for trying it out"
+            period=""
             bullets={[
               "3 lifetime conversions",
               "Excel + PDF exports",
               "Thread message extraction",
               "Download history",
             ]}
-            cta={{ label: "Get started", href: "/login" }}
+            ctaHref={loginHref}
+            ctaLabel="Get started"
           />
 
-          <Plan
-            title="Pro"
-            price="Unlimited"
-            subtitle="For ongoing work"
-            highlight
+          <TierCard
+            name="Starter"
+            tagline="For occasional use"
+            price={starterPrice}
+            period="/mo"
+            bullets={[
+              "50 conversions / month",
+              "Excel + PDF exports",
+              "Thread message extraction",
+              "Download history",
+            ]}
+            ctaHref="/app?plan=starter"
+            ctaLabel="Choose Starter"
+          />
+
+          <TierCard
+            name="Pro"
+            tagline="For ongoing work"
+            price={proPrice}
+            period="/mo"
             bullets={[
               "Unlimited conversions",
               "Excel + PDF exports",
               "Thread message extraction",
               "Priority improvements",
             ]}
-            cta={{ label: "Upgrade in dashboard", href: "/app?plan=pro" }}
+            ctaHref="/app?plan=pro"
+            ctaLabel="Choose Pro"
+            featured
+            badge="Most popular"
           />
         </div>
 
         <div className="mt-10 rounded-2xl border border-gray-200 bg-gray-50 p-6">
           <div className="text-sm font-semibold text-gray-900">Need help?</div>
-          <p className="mt-2 text-sm text-gray-600">
-            Start with Free and upgrade only when you hit the limit.
+          <p className="mt-1 text-sm text-gray-600">
+            Start with Free and upgrade only when you hit the limit. You can manage upgrades inside
+            your dashboard.
           </p>
-          <div className="mt-4">
-            <Link href="/how-it-works" className="text-sm font-semibold text-gray-900 hover:underline">
-              See how it works →
+          <div className="mt-3">
+            <Link href="/how-it-works" className="text-sm font-semibold text-gray-900">
+              See how it works <span aria-hidden>→</span>
             </Link>
           </div>
         </div>
       </section>
     </main>
-  );
-}
-
-function Plan({
-  title,
-  price,
-  subtitle,
-  bullets,
-  cta,
-  highlight,
-}: {
-  title: string;
-  price: string;
-  subtitle: string;
-  bullets: string[];
-  cta: { label: string; href: string };
-  highlight?: boolean;
-}) {
-  return (
-    <div
-      className={[
-        "rounded-2xl border p-8 shadow-sm",
-        highlight ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white",
-      ].join(" ")}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className={["text-sm font-semibold", highlight ? "text-white" : "text-gray-900"].join(" ")}>
-            {title}
-          </div>
-          <div className={["mt-1 text-sm", highlight ? "text-gray-200" : "text-gray-600"].join(" ")}>
-            {subtitle}
-          </div>
-        </div>
-        {highlight && (
-          <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white">
-            Most popular
-          </span>
-        )}
-      </div>
-
-      <div className="mt-6">
-        <div className={["text-3xl font-semibold tracking-tight", highlight ? "text-white" : "text-gray-900"].join(" ")}>
-          {price}
-        </div>
-      </div>
-
-      <ul className={["mt-6 space-y-2 text-sm", highlight ? "text-gray-200" : "text-gray-700"].join(" ")}>
-        {bullets.map((b) => (
-          <li key={b} className="flex gap-2">
-            <span className="mt-1">•</span>
-            <span>{b}</span>
-          </li>
-        ))}
-      </ul>
-
-      <Link
-        href={cta.href}
-        className={[
-          "mt-8 inline-flex w-full items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold",
-          highlight
-            ? "bg-white text-gray-900 hover:bg-gray-100"
-            : "bg-gray-900 text-white hover:bg-black",
-        ].join(" ")}
-      >
-        {cta.label}
-      </Link>
-    </div>
   );
 }
