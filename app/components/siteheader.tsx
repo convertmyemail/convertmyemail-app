@@ -32,27 +32,28 @@ function NavLink({
   );
 }
 
-function BrandMark({ size = 44 }: { size?: number }) {
+function BrandMark({ size = 40 }: { size?: number }) {
   return (
     <span
       className="inline-flex items-center justify-center overflow-hidden rounded-xl"
       style={{ width: size, height: size }}
+      aria-hidden="true"
     >
       <Image
         src="/icon-light.png"
-        alt="Convert My Email"
-        fill
-        priority
-        sizes={`${size}px`}
-        className="object-contain dark:hidden"
+        alt=""
+        width={size}
+        height={size}
+        unoptimized
+        className="block h-full w-full object-contain dark:hidden"
       />
       <Image
         src="/icon-dark.png"
-        alt="Convert My Email"
-        fill
-        priority
-        sizes={`${size}px`}
-        className="object-contain hidden dark:block"
+        alt=""
+        width={size}
+        height={size}
+        unoptimized
+        className="hidden h-full w-full object-contain dark:block"
       />
     </span>
   );
@@ -68,13 +69,15 @@ export default function SiteHeader({ variant = "marketing" }: Props) {
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="flex items-center gap-2">
-          <BrandMark size={32} />
+        <Link href="/" className="flex items-center gap-3">
+          <BrandMark size={40} />
           <div className="leading-tight">
             <div className="text-sm font-semibold tracking-tight text-gray-900">
               Convert My Email
             </div>
-            <div className="mt-0.5 text-xs text-gray-500">Professional conversions</div>
+            <div className="mt-0.5 text-xs text-gray-500">
+              Professional conversions
+            </div>
           </div>
         </Link>
 
