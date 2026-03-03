@@ -58,9 +58,9 @@ function limitFor(plan: PlanKey): number | null {
     case "free":
       return FREE_LIMIT; // ✅ per month (UTC)
     case "starter":
-      return 50; // ✅ per billing cycle
+      return 20; // ✅ per billing cycle
     case "pro":
-      return 250; // ✅ per billing cycle
+      return 75; // ✅ per billing cycle
     case "business":
       return null; // unlimited
   }

@@ -21,7 +21,7 @@ type Plan = "free" | "starter" | "pro" | "business";
 const LIMITS: Record<Plan, number | null> = {
   free: 3, // ✅ per month (UTC)
   starter: 50, // per billing cycle
-  pro: 250, // per billing cycle
+  pro: 75, // per billing cycle
   business: null, // unlimited
 };
 
@@ -111,8 +111,8 @@ async function getSubscriptionSnapshot(supabase: SupabaseClient, userId: string)
 /**
  * Enforces:
  * - free: 3 / month (UTC month)
- * - starter: 50 / billing cycle
- * - pro: 250 / billing cycle
+ * - starter: 20 / billing cycle
+ * - pro: 75 / billing cycle
  * - business: unlimited
  *
  * We count "conversions" rows as the unit of usage.

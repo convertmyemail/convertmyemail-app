@@ -6,7 +6,7 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
 
-  // ✅ Allow `any` in API route boundary code (Stripe, Supabase, etc.)
+  // Allow `any` ONLY in API boundary code (Stripe, Supabase, webhooks)
   {
     files: ["app/api/**/*.{ts,tsx}"],
     rules: {
@@ -14,7 +14,13 @@ export default defineConfig([
     },
   },
 
-  // Override default ignores of eslint-config-next.
+  // Prevent console logs in production builds (optional but recommended)
+  {
+    rules: {
+      "no-console": ["warn", { allow: ["warn", "error"] }],
+    },
+  },
+
   globalIgnores([
     ".next/**",
     "out/**",

@@ -19,7 +19,7 @@ export default async function MarketingHome({
       <SiteHeader variant="marketing" />
 
       {/* Hero */}
-      <section className="mx-auto max-w-6xl px-6 pt-14 pb-12 md:pt-20">
+      <section className="mx-auto max-w-6xl px-6 pb-12 pt-14 md:pt-20">
         <div className="grid gap-10 md:grid-cols-2 md:items-center">
           <div>
             <p className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
@@ -27,12 +27,12 @@ export default async function MarketingHome({
             </p>
 
             <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">
-              Convert Email Files to Clean Records
+              Convert Email Threads Into Clean Excel Files Instantly
             </h1>
 
             <p className="mt-4 text-base leading-7 text-gray-600 md:text-lg">
-              Upload .eml files. Extract structured data. Download formatted Excel or professional
-              PDFs — ready for storage, filing, or submission.
+              Upload .eml files and generate structured spreadsheets or court-ready PDFs in seconds.
+              No formatting. No copy/paste. No manual cleanup.
             </p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -51,7 +51,7 @@ export default async function MarketingHome({
             </div>
 
             <p className="mt-3 text-xs text-gray-500">
-              Passwordless login. Designed for accountants, law firms, and compliance teams.
+              Passwordless login. Trusted by accountants, legal teams, and virtual assistants.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-2">
@@ -126,21 +126,16 @@ export default async function MarketingHome({
               title="Built for compliance"
               text="Structured exports that support audit and legal workflows."
             />
-            <Proof
-              title="Simple to use"
-              text="Upload → Convert → Download. No training required."
-            />
+            <Proof title="Simple to use" text="Upload → Convert → Download. No training required." />
           </div>
         </div>
       </section>
 
-      {/* Simple “Explore” section replaces the busy in-page sections */}
+      {/* Explore */}
       <section className="mx-auto max-w-6xl px-6 py-14">
-        <h2 className="text-2xl font-semibold tracking-tight">
-          Everything you need, clearly explained
-        </h2>
+        <h2 className="text-2xl font-semibold tracking-tight">Everything you need to get started</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600">
-          We moved details into dedicated pages so the homepage stays fast and focused.
+          Clear steps, file-saving guides, and transparent pricing.
         </p>
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
@@ -157,7 +152,7 @@ export default async function MarketingHome({
           <ExploreCard
             href="/pricing"
             title="Pricing"
-            text="Start free, upgrade when you need unlimited conversions."
+            text="Start free. Upgrade anytime for 20, 75, or unlimited conversions."
           />
         </div>
       </section>
@@ -190,19 +185,19 @@ export default async function MarketingHome({
         <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-gray-200 pt-6 text-xs text-gray-500 md:flex-row md:items-center">
           <div>© {new Date().getFullYear()} Convert My Email</div>
           <div className="flex flex-wrap gap-4">
-  <Link href={loginHref} className="hover:text-gray-700">
-    Sign in
-  </Link>
-  <Link href="/how-it-works" className="hover:text-gray-700">
-    How it works
-  </Link>
-  <Link href="/how-to-save-eml" className="hover:text-gray-700">
-    Save to .eml
-  </Link>
-  <Link href="/pricing" className="hover:text-gray-700">
-    Pricing
-  </Link>
-</div>
+            <Link href={loginHref} className="hover:text-gray-700">
+              Sign in
+            </Link>
+            <Link href="/how-it-works" className="hover:text-gray-700">
+              How it works
+            </Link>
+            <Link href="/how-to-save-eml" className="hover:text-gray-700">
+              Save to .eml
+            </Link>
+            <Link href="/pricing" className="hover:text-gray-700">
+              Pricing
+            </Link>
+          </div>
         </footer>
       </section>
     </main>
@@ -213,7 +208,7 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 bg-white p-3">
       <div className="text-xs font-medium text-gray-700">{label}</div>
-      <div className="text-xs text-gray-600 text-right">{value}</div>
+      <div className="text-right text-xs text-gray-600">{value}</div>
     </div>
   );
 }
@@ -227,15 +222,7 @@ function Proof({ title, text }: { title: string; text: string }) {
   );
 }
 
-function ExploreCard({
-  href,
-  title,
-  text,
-}: {
-  href: string;
-  title: string;
-  text: string;
-}) {
+function ExploreCard({ href, title, text }: { href: string; title: string; text: string }) {
   return (
     <Link
       href={href}
