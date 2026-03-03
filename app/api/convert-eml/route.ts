@@ -9,10 +9,17 @@ export const dynamic = "force-dynamic";
 
 const BUCKET = "conversions";
 
+// ✅ Step 1D: UTC monthly window helper (for monthly free reset)
+function getUtcMonthWindow(d = new Date()) {
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0));
+  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0));
+  return { start, end };
+}
+
 // Plan + limits (per your pricing)
 type Plan = "free" | "starter" | "pro" | "business";
 const LIMITS: Record<Plan, number | null> = {
-  free: 3, // lifetime
+  free: 3, // ✅ per month (UTC)
   starter: 50, // per billing cycle
   pro: 250, // per billing cycle
   business: null, // unlimited
@@ -103,7 +110,7 @@ async function getSubscriptionSnapshot(supabase: SupabaseClient, userId: string)
 
 /**
  * Enforces:
- * - free: 3 lifetime conversions
+ * - free: 3 / month (UTC month)
  * - starter: 50 / billing cycle
  * - pro: 250 / billing cycle
  * - business: unlimited
@@ -114,6 +121,10 @@ async function enforceUsageLimit(supabase: SupabaseClient, userId: string) {
   const snap = await getSubscriptionSnapshot(supabase, userId);
 
   const status = String(snap.status || "").toLowerCase();
+
+  // Active access rules:
+  // - cancel_at_period_end should remain "active" until period end (Stripe default),
+  //   so this still works correctly.
   const isActive = status === "active" || status === "trialing";
 
   const periodEnd = snap.periodEnd;
@@ -136,13 +147,18 @@ async function enforceUsageLimit(supabase: SupabaseClient, userId: string) {
     };
   }
 
-  // Determine counting window (billing-cycle aligned for paid plans)
+  // Determine counting window:
+  // - free: UTC month window
+  // - paid: billing-cycle window (falls back to UTC month start if missing)
   let startIso: string | null = null;
   let endIso: string | null = null;
-  let window: "lifetime" | "billing_cycle" = "lifetime";
+  let window: "month" | "billing_cycle" = "month";
 
   if (entitledPlan === "free") {
-    window = "lifetime";
+    window = "month";
+    const { start, end } = getUtcMonthWindow();
+    startIso = start.toISOString();
+    endIso = end.toISOString();
   } else {
     window = "billing_cycle";
 
@@ -150,9 +166,8 @@ async function enforceUsageLimit(supabase: SupabaseClient, userId: string) {
     if (periodStart) {
       startIso = periodStart.toISOString();
     } else {
-      const now = new Date();
-      const fallback = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0));
-      startIso = fallback.toISOString();
+      const { start } = getUtcMonthWindow();
+      startIso = start.toISOString();
       console.warn("[convert-eml] Missing current_period_start; falling back to month start", {
         userId,
         entitledPlan,
@@ -194,7 +209,7 @@ async function enforceUsageLimit(supabase: SupabaseClient, userId: string) {
         error: "Conversion limit reached",
         message:
           entitledPlan === "free"
-            ? "You’ve used all free conversions. Upgrade to Starter to continue."
+            ? "You’ve used all free conversions for this month. Upgrade to Starter to continue."
             : `You’ve hit your billing-cycle limit. Upgrade to ${upgradeTarget} to continue.`,
         code: "LIMIT_REACHED",
         plan: entitledPlan,
@@ -371,7 +386,11 @@ async function rowsToPdfBuffer(rows: Array<Record<string, unknown>>): Promise<Bu
 
     const approxBodyLines = wrapLines({ text: bodyText, font, size: bodySize, maxWidth }).length;
     const needed =
-      18 + metaLines.length * labelLineHeight + 10 + Math.min(approxBodyLines, 12) * bodyLineHeight + 18;
+      18 +
+      metaLines.length * labelLineHeight +
+      10 +
+      Math.min(approxBodyLines, 12) * bodyLineHeight +
+      18;
 
     if (y - needed < marginBottom) newPage();
 
@@ -380,7 +399,13 @@ async function rowsToPdfBuffer(rows: Array<Record<string, unknown>>): Promise<Bu
 
     for (const m of metaLines) {
       const label = `${m.k}: `;
-      page.drawText(label, { x: marginX, y, size: labelSize, font: fontBold, color: rgb(0.2, 0.2, 0.2) });
+      page.drawText(label, {
+        x: marginX,
+        y,
+        size: labelSize,
+        font: fontBold,
+        color: rgb(0.2, 0.2, 0.2),
+      });
       page.drawText(m.v, {
         x: marginX + fontBold.widthOfTextAtSize(label, labelSize),
         y,
@@ -393,7 +418,13 @@ async function rowsToPdfBuffer(rows: Array<Record<string, unknown>>): Promise<Bu
 
     y -= 6;
 
-    page.drawText("Body:", { x: marginX, y, size: labelSize, font: fontBold, color: rgb(0.2, 0.2, 0.2) });
+    page.drawText("Body:", {
+      x: marginX,
+      y,
+      size: labelSize,
+      font: fontBold,
+      color: rgb(0.2, 0.2, 0.2),
+    });
     y -= 14;
 
     const lines = wrapLines({ text: bodyText || "(empty)", font, size: bodySize, maxWidth });
@@ -605,7 +636,8 @@ export async function POST(req: Request) {
     return new NextResponse(new Uint8Array(xlsxBuffer), {
       status: 200,
       headers: {
-        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": 'attachment; filename="converted-emails.xlsx"',
       },
     });

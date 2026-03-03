@@ -1,56 +1,69 @@
 "use client";
 
-import { useAppShell } from "../app-shell.client";
+import { useState } from "react";
+import { supabase } from "@/lib/supabase/browser";
 
 export const dynamic = "force-dynamic";
 
 export default function BillingPage() {
-  const { usage, usageLoading, isPro, startCheckout } = useAppShell();
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<string>("");
+
+  const cancelAtPeriodEnd = async () => {
+    setMsg("");
+    setLoading(true);
+
+    try {
+      const {
+        data: { session },
+        error: sessErr,
+      } = await supabase.auth.getSession();
+
+      if (sessErr || !session?.access_token) {
+        setMsg("You must be logged in to manage billing.");
+        return;
+      }
+
+      const res = await fetch("/api/stripe/cancel", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setMsg(data?.message || data?.error || "Cancel failed.");
+        return;
+      }
+
+      setMsg("✅ Subscription will cancel at period end. You’ll keep access until then.");
+    } catch (e: any) {
+      setMsg(e?.message || "Cancel failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-      <h1 className="text-lg font-semibold">Billing</h1>
-      <p className="mt-1 text-sm text-gray-600">Manage your subscription and plan.</p>
+    <div className="p-8 max-w-xl">
+      <h1 className="text-2xl font-semibold">Billing</h1>
+      <p className="mt-2 text-slate-600">
+        Manage your subscription. Canceling keeps your plan active until the current billing period ends.
+      </p>
 
-      {usageLoading ? (
-        <p className="mt-6 text-sm text-gray-500">Loading plan details…</p>
-      ) : (
-        <div className="mt-6 grid gap-6 md:grid-cols-2">
-          <div className="rounded-2xl border border-gray-200 p-6">
-            <h2 className="text-sm font-semibold">Free Plan</h2>
-            <p className="mt-1 text-sm text-gray-600">{usage?.free_limit ?? 3} lifetime conversions</p>
+      <div className="mt-6 rounded-xl border border-slate-200 p-4">
+        <button
+          onClick={cancelAtPeriodEnd}
+          disabled={loading}
+          className="rounded-lg bg-red-600 px-4 py-2 text-white font-medium disabled:opacity-60"
+        >
+          {loading ? "Canceling..." : "Cancel subscription"}
+        </button>
 
-            {!isPro && usage && (
-              <div className="mt-3 text-sm text-gray-700">
-                {usage.used} used —{" "}
-                <span className="font-semibold">{usage.remaining} remaining</span>
-              </div>
-            )}
-          </div>
-
-          <div
-            className={[
-              "rounded-2xl border p-6",
-              isPro ? "border-green-200 bg-green-50" : "border-gray-200",
-            ].join(" ")}
-          >
-            <h2 className="text-sm font-semibold">Pro Plan</h2>
-            <p className="mt-1 text-sm text-gray-600">Unlimited conversions</p>
-
-            {isPro ? (
-              <div className="mt-3 text-sm font-semibold text-green-700">Your current plan</div>
-            ) : (
-              <button
-                className="mt-4 rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-                onClick={() => startCheckout("pro")}
-                type="button"
-              >
-                Upgrade to Pro
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </section>
+        {msg ? <div className="mt-3 text-sm text-slate-700">{msg}</div> : null}
+      </div>
+    </div>
   );
 }

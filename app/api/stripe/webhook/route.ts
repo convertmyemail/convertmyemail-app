@@ -15,9 +15,7 @@ const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID!;
 const STRIPE_BUSINESS_PRICE_ID = process.env.STRIPE_BUSINESS_PRICE_ID!;
 
 if (!STRIPE_STARTER_PRICE_ID || !STRIPE_PRO_PRICE_ID || !STRIPE_BUSINESS_PRICE_ID) {
-  console.warn(
-    "[stripe:webhook] Missing STRIPE_*_PRICE_ID env vars. Plan mapping may default to free."
-  );
+  console.warn("[stripe:webhook] Missing STRIPE_*_PRICE_ID env vars. Plan mapping may default to free.");
 }
 
 const PRICE_ID_TO_PLAN: Record<string, Plan> = {
@@ -61,18 +59,16 @@ async function resolvePlanFromSubscription(subscriptionId?: string | null): Prom
   }
 }
 
+/**
+ * Demote rules:
+ * - cancel-at-period-end should NOT demote immediately (Stripe keeps status active until period end)
+ * - demote when Stripe indicates the subscription is not entitled anymore.
+ *
+ * Note: you previously demoted on past_due. Keeping that behavior (“cut access when not paid”).
+ */
 function shouldDemoteToFree(status?: string): boolean {
-  // Stripe statuses can include:
-  // incomplete, incomplete_expired, trialing, active, past_due, canceled, unpaid, paused
-  //
-  // Per your request: cut access immediately when not paid.
-  return (
-    status === "canceled" ||
-    status === "incomplete_expired" ||
-    status === "paused" ||
-    status === "unpaid" ||
-    status === "past_due"
-  );
+  const s = String(status || "").toLowerCase();
+  return s === "canceled" || s === "incomplete_expired" || s === "paused" || s === "unpaid" || s === "past_due";
 }
 
 export async function POST(req: Request) {
@@ -85,11 +81,7 @@ export async function POST(req: Request) {
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(
-      await rawBody(req),
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET!
-    );
+    event = stripe.webhooks.constructEvent(await rawBody(req), sig, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err: any) {
     console.error("[stripe:webhook] Signature verification failed:", err.message);
     return NextResponse.json({ error: err.message }, { status: 400 });
@@ -129,9 +121,12 @@ export async function POST(req: Request) {
           ? metadataPlan
           : await resolvePlanFromSubscription(subscriptionId ?? null);
 
-      // ✅ For billing-cycle usage windows, pull period start/end from the subscription now
+      // ✅ Pull period start/end + status + cancel_at_period_end from the subscription
       let periodStartIso: string | null = null;
       let periodEndIso: string | null = null;
+      let subStatus: string | null = null;
+      let cancelAtPeriodEnd: boolean | null = null;
+
       try {
         if (subscriptionId) {
           const sub = await stripe.subscriptions.retrieve(subscriptionId);
@@ -139,9 +134,12 @@ export async function POST(req: Request) {
           const pe = (sub as any).current_period_end as number | undefined;
           periodStartIso = ps ? new Date(ps * 1000).toISOString() : null;
           periodEndIso = pe ? new Date(pe * 1000).toISOString() : null;
+
+          subStatus = ((sub as any).status as string | undefined) ?? null;
+          cancelAtPeriodEnd = ((sub as any).cancel_at_period_end as boolean | undefined) ?? null;
         }
       } catch (e: any) {
-        console.warn("[stripe:webhook] Could not retrieve subscription period window:", e?.message);
+        console.warn("[stripe:webhook] Could not retrieve subscription fields:", e?.message);
       }
 
       console.log("[stripe:webhook] checkout.session.completed:", {
@@ -152,6 +150,8 @@ export async function POST(req: Request) {
         metadata: session.metadata,
         periodStartIso,
         periodEndIso,
+        subStatus,
+        cancelAtPeriodEnd,
       });
 
       if (userId && subscriptionId) {
@@ -160,7 +160,8 @@ export async function POST(req: Request) {
           stripe_customer_id: customerId ?? null,
           stripe_subscription_id: subscriptionId,
           plan,
-          status: "active",
+          status: subStatus ?? "active",
+          cancel_at_period_end: cancelAtPeriodEnd ?? false,
           current_period_start: periodStartIso,
           current_period_end: periodEndIso,
           updated_at: new Date().toISOString(),
@@ -190,8 +191,7 @@ export async function POST(req: Request) {
       const subscriptionId = sub.id;
       const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
 
-      // typings-safe reads
-      const status = (sub as any).status as string | undefined;
+      const status = String((sub as any).status ?? "unknown").toLowerCase();
 
       // ✅ Derive plan from subscription items (handles multiple items)
       const derivedPlan = derivePlanFromSubscriptionItems((sub as any)?.items?.data);
@@ -200,7 +200,9 @@ export async function POST(req: Request) {
       const periodStartUnix = (sub as any).current_period_start as number | undefined;
       const periodEndUnix = (sub as any).current_period_end as number | undefined;
 
-      const cancelAtPeriodEnd = (sub as any).cancel_at_period_end as boolean | undefined;
+      // ✅ cancel-at-period-end flag
+      const cancelAtPeriodEnd = ((sub as any).cancel_at_period_end as boolean | undefined) ?? false;
+
       const endedAtUnix = (sub as any).ended_at as number | undefined;
 
       // Optional: log a "matched" price id for debugging
@@ -221,6 +223,7 @@ export async function POST(req: Request) {
         endedAtUnix,
       });
 
+      // Find existing row (so we know user_id)
       const { data: row, error: selectError } = await supabaseAdmin
         .from("subscriptions")
         .select("user_id, plan")
@@ -233,7 +236,9 @@ export async function POST(req: Request) {
       }
 
       if (row?.user_id) {
-        // If not paid / ended, demote to free. Otherwise keep entitlement.
+        // ✅ Do NOT demote just because user scheduled cancellation (cancel_at_period_end).
+        // Stripe typically keeps status "active" until current_period_end anyway.
+        // We only demote when Stripe indicates loss of entitlement via status.
         const demote = shouldDemoteToFree(status);
         const planToPersist: Plan = demote ? "free" : derivedPlan;
 
@@ -241,11 +246,10 @@ export async function POST(req: Request) {
           user_id: row.user_id,
           stripe_customer_id: customerId ?? null,
           stripe_subscription_id: subscriptionId,
-          status: status ?? "unknown",
+          status,
           plan: planToPersist,
-          current_period_start: periodStartUnix
-            ? new Date(periodStartUnix * 1000).toISOString()
-            : null,
+          cancel_at_period_end: cancelAtPeriodEnd,
+          current_period_start: periodStartUnix ? new Date(periodStartUnix * 1000).toISOString() : null,
           current_period_end: periodEndUnix ? new Date(periodEndUnix * 1000).toISOString() : null,
           updated_at: new Date().toISOString(),
         });
