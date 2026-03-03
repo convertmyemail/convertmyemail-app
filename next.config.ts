@@ -3,9 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
-  experimental: {
-    typedRoutes: true,
-  },
+  // ✅ moved out of experimental in Next 16
+  typedRoutes: true,
 
   compiler: {
     removeConsole:
