@@ -5,7 +5,13 @@ import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+function requireEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
+}
+
+const stripe = new Stripe(requireEnv("STRIPE_SECRET_KEY"), {
   apiVersion: "2024-12-18.acacia" as any,
 });
 
@@ -16,31 +22,42 @@ function siteUrl() {
 type PriceKey = "starter" | "pro" | "business";
 
 const PRICE_ID_BY_KEY: Record<PriceKey, string> = {
-  starter: process.env.STRIPE_STARTER_PRICE_ID!,
-  pro: process.env.STRIPE_PRO_PRICE_ID!,
-  business: process.env.STRIPE_BUSINESS_PRICE_ID!,
+  starter: process.env.STRIPE_STARTER_PRICE_ID || "",
+  pro: process.env.STRIPE_PRO_PRICE_ID || "",
+  business: process.env.STRIPE_BUSINESS_PRICE_ID || "",
 };
+
+function isPriceKey(x: any): x is PriceKey {
+  return x === "starter" || x === "pro" || x === "business";
+}
 
 export async function POST(req: Request) {
   try {
-    const { priceKey } = (await req.json()) as { priceKey: PriceKey };
+    // Some clients may send { plan } instead of { priceKey }
+    const body = (await req.json().catch(() => ({}))) as {
+      priceKey?: string;
+      plan?: string;
+    };
 
-    if (!priceKey || !(priceKey in PRICE_ID_BY_KEY)) {
-      return NextResponse.json({ error: "Invalid priceKey" }, { status: 400 });
+    const key = body.priceKey ?? body.plan;
+
+    if (!isPriceKey(key)) {
+      return NextResponse.json(
+        { error: "Invalid priceKey", received: key },
+        { status: 400 }
+      );
     }
 
-    const priceId = PRICE_ID_BY_KEY[priceKey];
+    const priceId = PRICE_ID_BY_KEY[key];
     if (!priceId) {
       return NextResponse.json(
-        { error: `Missing price id for ${priceKey}` },
+        { error: `Missing Stripe price env var for ${key}`, key },
         { status: 500 }
       );
     }
 
     // Bind cookies to request context (and support cookie-based auth)
     await cookies();
-
-    // ✅ Your helper returns a Promise and takes 0 args in this codebase
     const supabase = await createSupabaseServerClient();
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
@@ -68,12 +85,31 @@ export async function POST(req: Request) {
       customer_email: subRow?.stripe_customer_id ? undefined : user.email ?? undefined,
       success_url: `${siteUrl()}/app?billing=success`,
       cancel_url: `${siteUrl()}/app?billing=cancelled`,
-      metadata: { user_id: user.id, price_key: priceKey },
+      metadata: { user_id: user.id, price_key: key },
     });
 
     return NextResponse.json({ url: session.url });
   } catch (e: any) {
-    console.error("[api/stripe/checkout] error:", e);
-    return NextResponse.json({ error: e?.message ?? "Stripe error" }, { status: 500 });
+    const message =
+      e?.raw?.message || e?.message || "Stripe error";
+
+    // Extra context for debugging “No such price”
+    console.error("[api/stripe/checkout] error:", {
+      message,
+      type: e?.type,
+      code: e?.code,
+      rawType: e?.raw?.type,
+    });
+
+    return NextResponse.json(
+      {
+        error: message,
+        hint:
+          message.includes("No such price")
+            ? "Your STRIPE_*_PRICE_ID env vars do not match the Stripe mode/account of STRIPE_SECRET_KEY (test vs live, or wrong account)."
+            : undefined,
+      },
+      { status: 500 }
+    );
   }
 }

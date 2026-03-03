@@ -22,7 +22,7 @@ type AppShellCtx = {
   usageLoading: boolean;
   isPro: boolean;
   refreshUsage: () => Promise<void>;
-  startCheckout: (priceKey?: "starter" | "pro") => Promise<void>;
+  startCheckout: (priceKey?: "starter" | "pro" | "business") => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -189,7 +189,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     router.refresh();
   };
 
-  const startCheckout = async (priceKey: "starter" | "pro" = "pro") => {
+  const startCheckout = async (priceKey: "starter" | "pro" | "business" = "pro") => {
     if (checkoutStartedRef.current) return;
     checkoutStartedRef.current = true;
 
@@ -350,6 +350,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
                   >
                     Home
+                  </Link>
+
+                  <Link
+                    href="/pricing"
+                    className="hidden sm:inline-flex rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
+                  >
+                    Pricing
+                  </Link>
+
+                  <Link
+                    href="/help"
+                    className="hidden sm:inline-flex rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
+                  >
+                    Help
                   </Link>
 
                   {!isPro && (
