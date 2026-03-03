@@ -123,8 +123,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
       setLoadingPlan(plan);
       await Promise.resolve(startCheckout(plan));
       // If startCheckout redirects, code may never reach here — that’s OK.
-    } catch (e) {
-      // Don’t lock the UI on error
+    } catch {
       setLoadingPlan(null);
     }
   };
@@ -216,7 +215,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
     loadHistory();
   }, []);
 
-  // Auto-start checkout on /app?plan=pro (deep-link)
+  // Auto-start checkout on /app?plan=starter|pro|business (deep-link)
   useEffect(() => {
     const sp = new URLSearchParams(window.location.search);
     const planKey = (sp.get("plan") || "").trim().toLowerCase();
@@ -332,7 +331,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
 
   return (
     <>
-      {/* Upgrade Modal (UPDATED UI) */}
+      {/* Upgrade Modal (3-tier) */}
       {limitModal.open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -577,7 +576,62 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
           </div>
         </div>
 
-        {/* ...rest of your file remains unchanged... */}
+        {/* ✅ Improved dashboard upsell messaging */}
+        {!isPro && showUsage && usageRemaining !== null && (
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-gray-900">⚡ You’re on the Free plan</div>
+
+                <div className="mt-1 text-sm text-gray-600">
+                  {usageRemaining <= 0 ? (
+                    <span className="font-medium text-gray-900">🔒 Monthly limit reached.</span>
+                  ) : usageRemaining === 1 ? (
+                    <span className="font-medium text-gray-900">
+                      ⚠ Only 1 conversion remaining this month.
+                    </span>
+                  ) : (
+                    <>
+                      {usageUsed} of {usageLimit} used this month —{" "}
+                      <span className="font-medium">{usageRemaining} remaining</span>
+                    </>
+                  )}
+                </div>
+
+                <div className="mt-1 text-xs text-gray-500">
+                  Upgrade to unlock 20, 75, or unlimited conversions instantly.
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                  onClick={() => handleUpgrade("pro")}
+                  type="button"
+                >
+                  Upgrade to Pro – 75/month
+                </button>
+
+                <button
+                  className="text-xs font-medium text-gray-600 hover:text-gray-900"
+                  onClick={() => openLimitModal()}
+                  type="button"
+                >
+                  View all plans
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 h-2 w-full overflow-hidden rounded-full border border-gray-200 bg-white">
+              <div
+                className="h-full bg-gray-900"
+                style={{
+                  width: `${Math.min(100, Math.round((usageUsed / Math.max(1, usageLimit)) * 100))}%`,
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         <input
           ref={fileInputRef}
@@ -588,11 +642,197 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
           onChange={(e) => setFiles(e.target.files)}
         />
 
-        {/* Keep the rest of your component exactly as-is */}
-        {/* (history table, status, download, etc.) */}
+        {/* Selected files */}
+        <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+          {!files || files.length === 0 ? (
+            <div className="flex flex-col gap-1">
+              <div className="text-sm font-medium text-gray-900">No files selected</div>
+              <div className="text-sm text-gray-600">
+                Choose one or more .eml files to convert into structured records.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-gray-900">{files.length} file(s) selected</div>
+                <button
+                  className="text-sm font-medium text-gray-700 hover:text-gray-900"
+                  onClick={() => setFiles(null)}
+                  type="button"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="mt-3 max-h-44 overflow-y-auto rounded-xl border border-gray-200 bg-white p-3">
+                {Array.from(files).map((file, index) => (
+                  <div
+                    key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                    className="flex items-center justify-between gap-3 border-b border-gray-100 py-2 last:border-b-0"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm text-gray-900" title={file.name}>
+                        {file.name}
+                      </div>
+                      <div className="text-xs text-gray-500">{(file.size / 1024).toFixed(0)} KB</div>
+                    </div>
+                    <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                      .eml
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {status && (
+          <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-gray-700">{status}</p>
+
+              {!isPro && /limit reached/i.test(status) && (
+                <button
+                  className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black"
+                  onClick={() => handleUpgrade("pro")}
+                  type="button"
+                >
+                  Upgrade
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <p className="mt-4 text-xs text-gray-500">
+          Tip: This is designed for clean storage, audit trails, and review workflows.
+        </p>
       </section>
 
-      {/* Your history section remains unchanged below */}
+      {/* History */}
+      <section className="mt-8 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Conversion history</h2>
+            <p className="mt-1 text-sm text-gray-600">Download previously generated files.</p>
+          </div>
+
+          <button
+            className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            onClick={loadHistory}
+            disabled={historyLoading}
+            type="button"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {historyError && <p className="mt-4 text-sm text-red-600">{historyError}</p>}
+
+        {historyLoading ? (
+          <p className="mt-4 text-sm text-gray-600">Loading…</p>
+        ) : history.length === 0 ? (
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-5">
+            <div className="text-sm font-medium text-gray-900">No conversions yet</div>
+            <div className="mt-1 text-sm text-gray-600">
+              Upload your first .eml file to generate a clean record.
+            </div>
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-gray-500">
+                  <th className="py-3 pr-3 font-medium">File</th>
+                  <th className="py-3 pr-3 font-medium">Converted</th>
+                  <th className="py-3 pr-3 font-medium">Messages</th>
+                  <th className="py-3 pr-3 font-medium">Formats</th>
+                  <th className="py-3 text-right font-medium">Download</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {history.map((c) => {
+                  const sheetKey = `${c.id}:sheet`;
+                  const pdfKey = `${c.id}:pdf`;
+                  const count = c.message_count ?? 1;
+                  const isThread = count > 1;
+
+                  return (
+                    <tr key={c.id} className="align-middle">
+                      <td className="py-3 pr-3">
+                        <div className="text-sm text-gray-900">{c.original_filename || "(unnamed)"}</div>
+                        <div className="text-xs text-gray-500">ID: {c.id.slice(0, 8)}</div>
+                      </td>
+
+                      <td className="py-3 pr-3 text-gray-600">{new Date(c.created_at).toLocaleString()}</td>
+
+                      <td className="py-3 pr-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isThread && (
+                            <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-900">
+                              Thread
+                            </span>
+                          )}
+
+                          <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                            {count.toLocaleString()} {count === 1 ? "message" : "messages"}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td className="py-3 pr-3">
+                        <div className="flex flex-wrap gap-2">
+                          {c.xlsx_path && (
+                            <span className="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                              XLSX
+                            </span>
+                          )}
+                          {!c.xlsx_path && c.csv_path && (
+                            <span className="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                              CSV
+                            </span>
+                          )}
+                          {c.pdf_path && (
+                            <span className="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700">
+                              PDF
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                            onClick={() => c.sheet_path && downloadConversionFile(c.id, "sheet")}
+                            disabled={!c.sheet_path || downloadingKey === sheetKey}
+                            type="button"
+                          >
+                            {downloadingKey === sheetKey ? "Preparing…" : "Excel"}
+                          </button>
+
+                          <button
+                            className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
+                            onClick={() => c.pdf_path && downloadConversionFile(c.id, "pdf")}
+                            disabled={!c.pdf_path || downloadingKey === pdfKey}
+                            type="button"
+                          >
+                            {downloadingKey === pdfKey ? "Preparing…" : "PDF"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            <p className="mt-4 text-xs text-gray-500">
+              PDFs are generated during conversion and stored alongside Excel exports.
+            </p>
+          </div>
+        )}
+      </section>
     </>
   );
 }
