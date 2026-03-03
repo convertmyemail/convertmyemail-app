@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import type { UrlObject } from "url";
 import { useEffect, useRef, useState } from "react";
 
-export default function MobileMenu({ loginHref }: { loginHref: string }) {
+type MobileMenuProps = {
+  loginHref: UrlObject; // ✅ typedRoutes-safe
+};
+
+export default function MobileMenu({ loginHref }: MobileMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -15,30 +20,18 @@ export default function MobileMenu({ loginHref }: { loginHref: string }) {
       }
     }
 
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
+    if (open) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [open]);
 
   // Close on ESC key
   useEffect(() => {
     function handleEsc(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
+      if (event.key === "Escape") setOpen(false);
     }
 
-    if (open) {
-      document.addEventListener("keydown", handleEsc);
-    }
-
-    return () => {
-      document.removeEventListener("keydown", handleEsc);
-    };
+    if (open) document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
   }, [open]);
 
   return (
@@ -63,6 +56,7 @@ export default function MobileMenu({ loginHref }: { loginHref: string }) {
             >
               How it works
             </Link>
+
             <Link
               href="#how-to-eml"
               onClick={() => setOpen(false)}
@@ -70,6 +64,7 @@ export default function MobileMenu({ loginHref }: { loginHref: string }) {
             >
               Save .eml
             </Link>
+
             <Link
               href="#pricing"
               onClick={() => setOpen(false)}
@@ -77,6 +72,7 @@ export default function MobileMenu({ loginHref }: { loginHref: string }) {
             >
               Pricing
             </Link>
+
             <Link
               href="#who"
               onClick={() => setOpen(false)}

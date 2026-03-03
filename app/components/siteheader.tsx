@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 
@@ -12,7 +13,7 @@ function NavLink({
   href,
   children,
 }: {
-  href: string;
+  href: Route;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -63,13 +64,14 @@ export default function SiteHeader({ variant = "marketing" }: Props) {
   const pathname = usePathname();
   const isDashboard = pathname?.startsWith("/app");
 
-  const ctaHref = isDashboard || variant === "app" ? "/" : "/login";
+  // ✅ typedRoutes-safe (static only)
+  const ctaHref: Route = isDashboard || variant === "app" ? "/" : "/login";
   const ctaLabel = isDashboard || variant === "app" ? "Home" : "Login";
 
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="flex items-center gap-3">
+        <Link href={"/" as Route} className="flex items-center gap-3">
           <BrandMark size={40} />
           <div className="leading-tight">
             <div className="text-sm font-semibold tracking-tight text-gray-900">
