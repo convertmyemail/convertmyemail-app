@@ -74,15 +74,10 @@ function normalizeUsage(input: unknown): Usage {
 
   const plan = String(obj.plan ?? "Free");
 
-  const limit =
-    obj.limit === null ? null : typeof obj.limit === "number" ? obj.limit : undefined;
+  const limit = obj.limit === null ? null : typeof obj.limit === "number" ? obj.limit : undefined;
 
   const free_limit =
-    typeof obj.free_limit === "number"
-      ? obj.free_limit
-      : typeof obj.limit === "number"
-      ? obj.limit
-      : 3;
+    typeof obj.free_limit === "number" ? obj.free_limit : typeof obj.limit === "number" ? obj.limit : 3;
 
   const used = typeof obj.used === "number" ? obj.used : 0;
 
@@ -106,12 +101,9 @@ function normalizeUsage(input: unknown): Usage {
     isPaid: typeof obj.isPaid === "boolean" ? obj.isPaid : undefined,
 
     // ✅ Billing fields
-    cancel_at_period_end:
-      typeof obj.cancel_at_period_end === "boolean" ? obj.cancel_at_period_end : undefined,
-    current_period_start:
-      typeof obj.current_period_start === "string" ? obj.current_period_start : null,
-    current_period_end:
-      typeof obj.current_period_end === "string" ? obj.current_period_end : null,
+    cancel_at_period_end: typeof obj.cancel_at_period_end === "boolean" ? obj.cancel_at_period_end : undefined,
+    current_period_start: typeof obj.current_period_start === "string" ? obj.current_period_start : null,
+    current_period_end: typeof obj.current_period_end === "string" ? obj.current_period_end : null,
 
     // ✅ Window fields
     window_start: typeof obj.window_start === "string" ? obj.window_start : null,
@@ -216,8 +208,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // Some endpoints may return isPaid/status; prefer them if present.
   const explicitIsPaid =
     usage?.isPaid === true ||
-    (typeof usage?.status === "string" &&
-      ["active", "trialing"].includes(usage.status.toLowerCase()));
+    (typeof usage?.status === "string" && ["active", "trialing"].includes(usage.status.toLowerCase()));
 
   const isPro = explicitIsPaid || isPaidPlan;
 
@@ -257,10 +248,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       });
 
       const data: unknown = await res.json().catch(() => ({}));
-      const obj = (data && typeof data === "object" ? (data as Record<string, unknown>) : {}) as Record<
-        string,
-        unknown
-      >;
+      const obj =
+        (data && typeof data === "object" ? (data as Record<string, unknown>) : {}) as Record<string, unknown>;
 
       if (!res.ok) {
         const errMsg = typeof obj.error === "string" ? obj.error : "Could not start checkout";
@@ -291,9 +280,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     if (!isPro && isPriceKey(plan)) {
       sp.delete("plan");
       const nextUrl =
-        window.location.pathname +
-        (sp.toString() ? `?${sp.toString()}` : "") +
-        window.location.hash;
+        window.location.pathname + (sp.toString() ? `?${sp.toString()}` : "") + window.location.hash;
 
       window.history.replaceState({}, "", nextUrl);
 
@@ -343,9 +330,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               >
                 <BrandMark size={40} />
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold tracking-tight hover:opacity-90">
-                    Convert My Email
-                  </div>
+                  <div className="text-sm font-semibold tracking-tight hover:opacity-90">Convert My Email</div>
                   <div className="mt-1 text-xs text-gray-500">Professional conversions</div>
                 </div>
               </Link>
@@ -395,9 +380,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       <span
                         className={[
                           "inline-flex items-center rounded-full px-2 py-1 text-xs font-semibold border",
-                          isPro
-                            ? "border-green-200 bg-green-50 text-green-800"
-                            : "border-yellow-200 bg-yellow-50 text-yellow-800",
+                          isPro ? "border-green-200 bg-green-50 text-green-800" : "border-yellow-200 bg-yellow-50 text-yellow-800",
                         ].join(" ")}
                         title="Your current plan"
                       >
@@ -407,14 +390,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                     {showMeter && (
                       <span className="text-xs text-gray-500">
-                        {usage.used} used —{" "}
-                        <span className="font-semibold text-gray-800">{usage.remaining} left</span>
+                        {usage.used} used — <span className="font-semibold text-gray-800">{usage.remaining} left</span>
                       </span>
                     )}
 
-                    {showUsage && isUnlimited && (
-                      <span className="text-xs text-gray-500">Unlimited conversions</span>
-                    )}
+                    {showUsage && isUnlimited && <span className="text-xs text-gray-500">Unlimited conversions</span>}
                   </div>
 
                   <div className="mt-1 truncate text-xs text-gray-500">
@@ -431,17 +411,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   </Link>
 
                   <Link
+                    href="/how-it-works"
+                    className="hidden sm:inline-flex rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
+                  >
+                    How it works
+                  </Link>
+
+                  <Link
                     href="/pricing"
                     className="hidden sm:inline-flex rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
                   >
                     Pricing
-                  </Link>
-
-                  <Link
-                    href="/help"
-                    className="hidden sm:inline-flex rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
-                  >
-                    Help
                   </Link>
 
                   {!isPro && (
