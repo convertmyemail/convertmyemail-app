@@ -11,16 +11,27 @@ type Usage = {
   used: number;
   remaining: number | null;
   free_limit: number;
+
   // optional fields some endpoints may return
-  limit?: number;
+  limit?: number | null; // ✅ allow null (unlimited)
   status?: string;
   isPaid?: boolean;
+
+  // ✅ subscription + billing fields for Billing page UX
+  cancel_at_period_end?: boolean;
+  current_period_start?: string | null;
+  current_period_end?: string | null;
+
+  // ✅ usage window fields (free month / paid billing cycle)
+  window_start?: string | null;
+  window_end?: string | null;
 };
 
 type AppShellCtx = {
   usage: Usage | null;
   usageLoading: boolean;
-  isPro: boolean;
+  isPro: boolean; // NOTE: kept name for minimal refactor; now means "paid (starter/pro/business)"
+  isUnlimited: boolean; // ✅ new
   refreshUsage: () => Promise<void>;
   startCheckout: (priceKey?: "starter" | "pro" | "business") => Promise<void>;
   logout: () => Promise<void>;
@@ -48,6 +59,12 @@ const FALLBACK_FREE: Usage = {
   used: 0,
   remaining: 3,
   free_limit: 3,
+  limit: 3,
+  cancel_at_period_end: false,
+  current_period_start: null,
+  current_period_end: null,
+  window_start: null,
+  window_end: null,
 };
 
 function normalizeUsage(input: unknown): Usage {
@@ -56,6 +73,9 @@ function normalizeUsage(input: unknown): Usage {
   const obj = input as Record<string, unknown>;
 
   const plan = String(obj.plan ?? "Free");
+
+  const limit =
+    obj.limit === null ? null : typeof obj.limit === "number" ? obj.limit : undefined;
 
   const free_limit =
     typeof obj.free_limit === "number"
@@ -71,6 +91,9 @@ function normalizeUsage(input: unknown): Usage {
       ? null
       : typeof obj.remaining === "number"
       ? obj.remaining
+      : // If limit is null => unlimited
+      limit === null
+      ? null
       : Math.max(0, free_limit - used);
 
   return {
@@ -78,9 +101,21 @@ function normalizeUsage(input: unknown): Usage {
     used,
     remaining,
     free_limit,
-    limit: typeof obj.limit === "number" ? obj.limit : undefined,
+    limit,
     status: typeof obj.status === "string" ? obj.status : undefined,
     isPaid: typeof obj.isPaid === "boolean" ? obj.isPaid : undefined,
+
+    // ✅ Billing fields
+    cancel_at_period_end:
+      typeof obj.cancel_at_period_end === "boolean" ? obj.cancel_at_period_end : undefined,
+    current_period_start:
+      typeof obj.current_period_start === "string" ? obj.current_period_start : null,
+    current_period_end:
+      typeof obj.current_period_end === "string" ? obj.current_period_end : null,
+
+    // ✅ Window fields
+    window_start: typeof obj.window_start === "string" ? obj.window_start : null,
+    window_end: typeof obj.window_end === "string" ? obj.window_end : null,
   };
 }
 
@@ -172,13 +207,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const explicitIsPro =
+  const normalizedPlan = String(usage?.plan || "Free").toLowerCase();
+
+  // ✅ Paid flag (keep name isPro for minimal changes elsewhere)
+  // Treat starter/pro/business as paid; free as not paid.
+  const isPaidPlan = ["starter", "pro", "business"].includes(normalizedPlan);
+
+  // Some endpoints may return isPaid/status; prefer them if present.
+  const explicitIsPaid =
     usage?.isPaid === true ||
     (typeof usage?.status === "string" &&
       ["active", "trialing"].includes(usage.status.toLowerCase()));
 
-  const normalizedPlan = String(usage?.plan || "Free").toLowerCase();
-  const isPro = explicitIsPro || normalizedPlan === "pro" || normalizedPlan === "starter";
+  const isPro = explicitIsPaid || isPaidPlan;
+
+  // ✅ Unlimited only when backend signals it:
+  // - limit === null (ideal)
+  // - remaining === null (back-compat)
+  const isUnlimited = usage?.limit === null || usage?.remaining === null;
 
   const activeHref = useMemo(() => {
     const exact = NAV.find((n) => n.href === pathname)?.href;
@@ -243,7 +289,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     // Only kick off checkout if plan is valid and user isn't already paid
     if (!isPro && isPriceKey(plan)) {
-      // Remove the plan param immediately to avoid repeats on refresh/navigation
       sp.delete("plan");
       const nextUrl =
         window.location.pathname +
@@ -262,6 +307,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     usage,
     usageLoading,
     isPro,
+    isUnlimited,
     refreshUsage,
     startCheckout,
     logout,
@@ -279,6 +325,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       : "Dashboard";
 
   const showUsage = !!usage && !usageLoading;
+
+  // ✅ Show usage counts for any NON-unlimited plan (free/starter/pro)
+  const showMeter = showUsage && !isUnlimited && usage?.remaining !== null;
 
   return (
     <Ctx.Provider value={ctxValue}>
@@ -356,14 +405,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       </span>
                     )}
 
-                    {showUsage && !isPro && usage?.remaining !== null && (
+                    {showMeter && (
                       <span className="text-xs text-gray-500">
                         {usage.used} used —{" "}
                         <span className="font-semibold text-gray-800">{usage.remaining} left</span>
                       </span>
                     )}
 
-                    {showUsage && isPro && (
+                    {showUsage && isUnlimited && (
                       <span className="text-xs text-gray-500">Unlimited conversions</span>
                     )}
                   </div>

@@ -26,6 +26,12 @@ function asDate(value: any): Date | null {
   return null;
 }
 
+function getUtcMonthWindow(d = new Date()) {
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0));
+  const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0));
+  return { start, end };
+}
+
 type PlanKey = "free" | "starter" | "pro" | "business";
 
 function normalizePlan(raw: any): PlanKey {
@@ -50,11 +56,11 @@ function displayPlan(plan: PlanKey): "Free" | "Starter" | "Pro" | "Business" {
 function limitFor(plan: PlanKey): number | null {
   switch (plan) {
     case "free":
-      return FREE_LIMIT; // lifetime
+      return FREE_LIMIT; // ✅ per month (UTC)
     case "starter":
-      return 20; // per billing cycle
+      return 50; // ✅ per billing cycle
     case "pro":
-      return 75; // per billing cycle
+      return 250; // ✅ per billing cycle
     case "business":
       return null; // unlimited
   }
@@ -76,7 +82,7 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // 1) Get latest subscription snapshot (fail-open to Free)
+    // 1) Subscription snapshot (fail-open to Free)
     let planKey: PlanKey = "free";
     let status = "free";
     let isPaid = false;
@@ -84,10 +90,13 @@ export async function GET() {
     let periodStart: Date | null = null;
     let periodEnd: Date | null = null;
 
+    // ✅ NEW
+    let cancelAtPeriodEnd = false;
+
     try {
       const { data: sub, error: subErr } = await supabase
         .from("subscriptions")
-        .select("status, plan, current_period_start, current_period_end, updated_at")
+        .select("status, plan, cancel_at_period_end, current_period_start, current_period_end, updated_at")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(1)
@@ -99,13 +108,15 @@ export async function GET() {
         const rawStatus = String((sub as any).status ?? "").toLowerCase();
         const rawPlan = normalizePlan((sub as any).plan);
 
+        // ✅ NEW
+        cancelAtPeriodEnd = Boolean((sub as any).cancel_at_period_end);
+
         periodStart = asDate((sub as any).current_period_start);
         periodEnd = asDate((sub as any).current_period_end);
 
         const active = rawStatus === "active" || rawStatus === "trialing";
         const notExpired = !periodEnd || periodEnd.getTime() > Date.now();
 
-        // paid only if active + not expired + not free
         isPaid = active && notExpired && rawPlan !== "free";
         status = rawStatus || (isPaid ? "active" : "free");
 
@@ -118,28 +129,50 @@ export async function GET() {
       isPaid = false;
       periodStart = null;
       periodEnd = null;
+      cancelAtPeriodEnd = false; // ✅ NEW
     }
 
-    // 2) Count conversions used
-    // Free: lifetime count
-    // Paid: count within billing window if we have a periodStart; otherwise fail-open to lifetime (still okay for UI)
+    // 2) Decide counting window
+    // - Free: current UTC month
+    // - Paid: current billing cycle (periodStart/periodEnd); fallback to UTC month start if missing
+    let windowStart: Date | null = null;
+    let windowEnd: Date | null = null;
+
+    if (!isPaid) {
+      const { start, end } = getUtcMonthWindow();
+      windowStart = start;
+      windowEnd = end;
+    } else {
+      if (periodStart) {
+        windowStart = periodStart;
+      } else {
+        const { start } = getUtcMonthWindow();
+        windowStart = start;
+        console.warn("[usage] Missing current_period_start; falling back to UTC month start", {
+          userId: user.id,
+          planKey,
+        });
+      }
+      windowEnd = periodEnd ?? null;
+    }
+
+    // 3) Count conversions used in window
     let used = 0;
 
     try {
-      let q = supabase.from("conversions").select("id", { count: "exact", head: true }).eq("user_id", user.id);
+      let q = supabase
+        .from("conversions")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", user.id);
 
-      if (isPaid && periodStart) {
-        // conversions.created_at is assumed to be ISO timestamp
-        q = q.gte("created_at", periodStart.toISOString());
-        if (periodEnd) q = q.lt("created_at", periodEnd.toISOString());
-      }
+      if (windowStart) q = q.gte("created_at", windowStart.toISOString());
+      if (windowEnd) q = q.lt("created_at", windowEnd.toISOString());
 
       const { count, error: countErr } = await q;
 
       if (countErr) {
         console.error("usage: count conversions failed", countErr);
-        // fail-open
-        used = 0;
+        used = 0; // fail-open
       } else {
         used = count ?? 0;
       }
@@ -149,18 +182,24 @@ export async function GET() {
     }
 
     const limit = limitFor(planKey);
-
-    const remaining =
-      limit === null ? null : Math.max(0, limit - used);
+    const remaining = limit === null ? null : Math.max(0, limit - used);
 
     return NextResponse.json({
-      plan: displayPlan(planKey),     // "Free" | "Starter" | "Pro" | "Business"
-      used,                           // number used in window (paid) or lifetime (free)
-      remaining,                      // null for unlimited, number otherwise
+      plan: displayPlan(planKey),
+      used,
+      remaining, // ✅ only null for Business
       free_limit: FREE_LIMIT,
-      limit,                          // helpful for UI/debug
+      limit, // ✅ Starter=50, Pro=250, Business=null, Free=3
       status,
-      isPaid,                         // true for starter/pro/business when active
+      isPaid,
+
+      // ✅ NEW: for Billing UI
+      cancel_at_period_end: cancelAtPeriodEnd,
+
+      window_start: windowStart ? windowStart.toISOString() : null,
+      window_end: windowEnd ? windowEnd.toISOString() : null,
+
+      // still return these for debug/UI if you want them
       current_period_start: periodStart ? periodStart.toISOString() : null,
       current_period_end: periodEnd ? periodEnd.toISOString() : null,
     });
@@ -174,6 +213,9 @@ export async function GET() {
       limit: FREE_LIMIT,
       status: "unknown",
       isPaid: false,
+      cancel_at_period_end: false, // ✅ NEW
+      window_start: null,
+      window_end: null,
       current_period_start: null,
       current_period_end: null,
     });
