@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { UrlObject } from "url";
 
 export default function PricingSection({ loginHref }: { loginHref: string }) {
   const starterRaw = process.env.NEXT_PUBLIC_STARTER_PRICE_DISPLAY || "9";
@@ -9,19 +10,30 @@ export default function PricingSection({ loginHref }: { loginHref: string }) {
   const proPrice = proRaw.startsWith("$") ? proRaw : `$${proRaw}`;
   const businessPrice = businessRaw.startsWith("$") ? businessRaw : `$${businessRaw}`;
 
-  // ✅ Overwrite plan param instead of appending duplicate plan=...
-  const withPlan = (plan: string) => {
-    // Use a dummy base so URL() can parse relative paths like "/login?next=/app"
+  // ✅ Return an UrlObject (typedRoutes-friendly) instead of a dynamic string
+  const withPlan = (plan: "starter" | "pro" | "business"): UrlObject => {
     const u = new URL(loginHref, "http://local");
     u.searchParams.set("plan", plan);
-    return `${u.pathname}${u.search}${u.hash}`;
+
+    const query: Record<string, string> = {};
+    u.searchParams.forEach((value, key) => {
+      query[key] = value;
+    });
+
+    return { pathname: u.pathname, query, hash: u.hash || undefined };
   };
 
-  // Optional: ensure Free CTA never carries a plan param
-  const withoutPlan = () => {
+  // ✅ Free CTA: remove any plan param (also UrlObject)
+  const withoutPlan = (): UrlObject => {
     const u = new URL(loginHref, "http://local");
     u.searchParams.delete("plan");
-    return `${u.pathname}${u.search}${u.hash}`;
+
+    const query: Record<string, string> = {};
+    u.searchParams.forEach((value, key) => {
+      query[key] = value;
+    });
+
+    return { pathname: u.pathname, query, hash: u.hash || undefined };
   };
 
   return (
@@ -140,7 +152,7 @@ function PlanCard({
   period: string;
   description: string;
   features: string[];
-  cta: { label: string; href: string; variant: "primary" | "secondary" };
+  cta: { label: string; href: UrlObject; variant: "primary" | "secondary" };
   badge?: string;
   emphasized?: boolean;
 }) {
