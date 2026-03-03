@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import Image from "next/image";
 import { supabase } from "../../lib/supabase/browser";
 
@@ -19,19 +20,20 @@ function cleanBaseUrl(url: string) {
 const COOLDOWN_SECONDS = 60;
 const COOLDOWN_KEY = "cme_magiclink_cooldown_until";
 
-function getInitialFromLocation(): { nextPath: string; status: string } {
+function getInitialFromLocation(): { nextPath: Route; status: string } {
   if (typeof window === "undefined") return { nextPath: "/app", status: "" };
 
   try {
     const params = new URLSearchParams(window.location.search);
     const n = params.get("next");
-    const nextPath = safeNextPath(n);
+
+    // ✅ typedRoutes-safe: sanitize, then cast to Route
+    const nextPath = safeNextPath(n) as Route;
 
     const err = params.get("error");
     const reason = params.get("reason");
 
-    const status =
-      err ? (reason ? `Login error: ${reason}` : `Login error: ${err}`) : "";
+    const status = err ? (reason ? `Login error: ${reason}` : `Login error: ${err}`) : "";
 
     return { nextPath, status };
   } catch {
@@ -47,7 +49,7 @@ export default function LoginPage() {
 
   // ✅ initialize from URL without setState-in-effect lint warnings
   const initial = useMemo(() => getInitialFromLocation(), []);
-  const [nextPath] = useState<string>(initial.nextPath);
+  const [nextPath] = useState<Route>(initial.nextPath);
   const [status, setStatus] = useState<string>(initial.status);
 
   // Cooldown state
@@ -119,7 +121,7 @@ export default function LoginPage() {
       // ✅ Always redirect to canonical domain if configured
       const origin = baseUrl || window.location.origin;
 
-      const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
+      const redirectTo = `${origin}/auth/callback?next=${encodeURIComponent(String(nextPath))}`;
 
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
@@ -206,7 +208,8 @@ export default function LoginPage() {
               </div>
 
               <p className="text-xs text-gray-500">
-                Redirect after login: <span className="font-medium text-gray-700">{nextPath}</span>
+                Redirect after login:{" "}
+                <span className="font-medium text-gray-700">{String(nextPath)}</span>
               </p>
 
               {/* Optional: helpful debug line (remove anytime) */}
@@ -221,7 +224,9 @@ export default function LoginPage() {
           <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
             <div>
               <div className="text-sm font-semibold">Magic link</div>
-              <div className="mt-1 text-xs text-gray-500">We’ll email you a secure sign-in link.</div>
+              <div className="mt-1 text-xs text-gray-500">
+                We’ll email you a secure sign-in link.
+              </div>
             </div>
 
             <div className="mt-5">
@@ -246,7 +251,11 @@ export default function LoginPage() {
               disabled={loading || isCooldownActive}
               type="button"
             >
-              {loading ? "Sending…" : isCooldownActive ? `Resend in ${secondsLeft}s` : "Send magic link"}
+              {loading
+                ? "Sending…"
+                : isCooldownActive
+                ? `Resend in ${secondsLeft}s`
+                : "Send magic link"}
             </button>
 
             {isCooldownActive && !loading && (
@@ -264,8 +273,9 @@ export default function LoginPage() {
             <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4">
               <div className="text-xs font-medium text-gray-700">Trouble?</div>
               <p className="mt-1 text-xs text-gray-600">
-                If you don’t see the email, check spam/junk and try again. Some providers delay delivery briefly.
-                Also make sure you open the magic link in the same browser you used to request it.
+                If you don’t see the email, check spam/junk and try again. Some providers delay
+                delivery briefly. Also make sure you open the magic link in the same browser you
+                used to request it.
               </p>
             </div>
           </div>
