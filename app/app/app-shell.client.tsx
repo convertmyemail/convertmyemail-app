@@ -84,6 +84,11 @@ function normalizeUsage(input: unknown): Usage {
   };
 }
 
+type PriceKey = "starter" | "pro" | "business";
+function isPriceKey(x: string | null): x is PriceKey {
+  return x === "starter" || x === "pro" || x === "business";
+}
+
 function BrandMark({ size = 36 }: { size?: number }) {
   // Uses public-root icons: /icon-light.png and /icon-dark.png
   return (
@@ -228,6 +233,30 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       console.error("checkout error", e);
     }
   };
+
+  // ✅ Auto-start checkout when user lands on /app with ?plan=starter|pro|business
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const sp = new URLSearchParams(window.location.search);
+    const plan = sp.get("plan");
+
+    // Only kick off checkout if plan is valid and user isn't already paid
+    if (!isPro && isPriceKey(plan)) {
+      // Remove the plan param immediately to avoid repeats on refresh/navigation
+      sp.delete("plan");
+      const nextUrl =
+        window.location.pathname +
+        (sp.toString() ? `?${sp.toString()}` : "") +
+        window.location.hash;
+
+      window.history.replaceState({}, "", nextUrl);
+
+      // Start checkout once
+      startCheckout(plan);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPro]);
 
   const ctxValue: AppShellCtx = {
     usage,
