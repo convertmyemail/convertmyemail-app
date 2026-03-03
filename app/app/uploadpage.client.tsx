@@ -609,7 +609,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
                   onClick={() => handleUpgrade("pro")}
                   type="button"
                 >
-                  Upgrade to Pro – 75/month
+                  Upgrade to Pro – $19/mo
                 </button>
 
                 <button
