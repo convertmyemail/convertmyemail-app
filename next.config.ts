@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
-  // ✅ moved out of experimental in Next 16
-  typedRoutes: true,
+  // ✅ Turn OFF typedRoutes for launch stability (we can re-enable later)
+  typedRoutes: false,
 
   compiler: {
     removeConsole:
