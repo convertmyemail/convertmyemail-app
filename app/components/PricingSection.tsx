@@ -9,8 +9,20 @@ export default function PricingSection({ loginHref }: { loginHref: string }) {
   const proPrice = proRaw.startsWith("$") ? proRaw : `$${proRaw}`;
   const businessPrice = businessRaw.startsWith("$") ? businessRaw : `$${businessRaw}`;
 
-  const withPlan = (plan: string) =>
-    `${loginHref}${loginHref.includes("?") ? "&" : "?"}plan=${encodeURIComponent(plan)}`;
+  // ✅ Overwrite plan param instead of appending duplicate plan=...
+  const withPlan = (plan: string) => {
+    // Use a dummy base so URL() can parse relative paths like "/login?next=/app"
+    const u = new URL(loginHref, "http://local");
+    u.searchParams.set("plan", plan);
+    return `${u.pathname}${u.search}${u.hash}`;
+  };
+
+  // Optional: ensure Free CTA never carries a plan param
+  const withoutPlan = () => {
+    const u = new URL(loginHref, "http://local");
+    u.searchParams.delete("plan");
+    return `${u.pathname}${u.search}${u.hash}`;
+  };
 
   return (
     <section className="mx-auto max-w-6xl px-6 py-16" id="pricing">
@@ -40,7 +52,7 @@ export default function PricingSection({ loginHref }: { loginHref: string }) {
           ]}
           cta={{
             label: "Start free",
-            href: loginHref,
+            href: withoutPlan(),
             variant: "secondary",
           }}
         />
