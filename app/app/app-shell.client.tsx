@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -45,7 +46,7 @@ export function useAppShell() {
   return ctx;
 }
 
-type NavItem = { label: string; href: string };
+type NavItem = { label: string; href: Route };
 
 const NAV: NavItem[] = [
   { label: "Dashboard", href: "/app" },
@@ -101,9 +102,12 @@ function normalizeUsage(input: unknown): Usage {
     isPaid: typeof obj.isPaid === "boolean" ? obj.isPaid : undefined,
 
     // ✅ Billing fields
-    cancel_at_period_end: typeof obj.cancel_at_period_end === "boolean" ? obj.cancel_at_period_end : undefined,
-    current_period_start: typeof obj.current_period_start === "string" ? obj.current_period_start : null,
-    current_period_end: typeof obj.current_period_end === "string" ? obj.current_period_end : null,
+    cancel_at_period_end:
+      typeof obj.cancel_at_period_end === "boolean" ? obj.cancel_at_period_end : undefined,
+    current_period_start:
+      typeof obj.current_period_start === "string" ? obj.current_period_start : null,
+    current_period_end:
+      typeof obj.current_period_end === "string" ? obj.current_period_end : null,
 
     // ✅ Window fields
     window_start: typeof obj.window_start === "string" ? obj.window_start : null,
@@ -480,7 +484,7 @@ function SidebarItem({
   active,
 }: {
   children: React.ReactNode;
-  href: string;
+  href: Route;
   active?: boolean;
 }) {
   return (
