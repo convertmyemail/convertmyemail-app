@@ -1,5 +1,6 @@
 // app/page.tsx
 import Link from "next/link";
+import type { Route } from "next";
 import SiteHeader from "@/app/components/siteheader";
 
 type SP = { next?: string };
@@ -13,13 +14,16 @@ export default async function MarketingHome({
   const next = sp?.next ? encodeURIComponent(sp.next) : "";
   const loginHref = next ? `/login?next=${next}` : "/login";
 
+  // typedRoutes helper for dynamic strings
+  const asRoute = (href: string) => href as Route;
+
   return (
     <main className="min-h-screen bg-white text-gray-900">
       {/* Global header (Home + top navigation) */}
       <SiteHeader variant="marketing" />
 
       {/* Hero */}
-      <section className="mx-auto max-w-6xl px-6 pb-12 pt-14 md:pt-20">
+      <section className="mx-auto max-w-6xl px-6 pt-14 pb-12 md:pt-20">
         <div className="grid gap-10 md:grid-cols-2 md:items-center">
           <div>
             <p className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700">
@@ -27,17 +31,17 @@ export default async function MarketingHome({
             </p>
 
             <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">
-              Convert Email Threads Into Clean Excel Files Instantly
+              Convert Email Files to Clean Records
             </h1>
 
             <p className="mt-4 text-base leading-7 text-gray-600 md:text-lg">
-              Upload .eml files and generate structured spreadsheets or court-ready PDFs in seconds.
-              No formatting. No copy/paste. No manual cleanup.
+              Upload .eml files. Extract structured data. Download formatted Excel or professional
+              PDFs — ready for storage, filing, or submission.
             </p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <Link
-                href={loginHref}
+                href={asRoute(loginHref)}
                 className="inline-flex items-center justify-center rounded-xl bg-gray-900 px-5 py-3 text-sm font-semibold text-white hover:bg-black"
               >
                 Upload a file
@@ -51,7 +55,7 @@ export default async function MarketingHome({
             </div>
 
             <p className="mt-3 text-xs text-gray-500">
-              Passwordless login. Trusted by accountants, legal teams, and virtual assistants.
+              Passwordless login. Designed for accountants, law firms, and compliance teams.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-2">
@@ -126,16 +130,21 @@ export default async function MarketingHome({
               title="Built for compliance"
               text="Structured exports that support audit and legal workflows."
             />
-            <Proof title="Simple to use" text="Upload → Convert → Download. No training required." />
+            <Proof
+              title="Simple to use"
+              text="Upload → Convert → Download. No training required."
+            />
           </div>
         </div>
       </section>
 
       {/* Explore */}
       <section className="mx-auto max-w-6xl px-6 py-14">
-        <h2 className="text-2xl font-semibold tracking-tight">Everything you need to get started</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Everything you need, clearly explained
+        </h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600">
-          Clear steps, file-saving guides, and transparent pricing.
+          We moved details into dedicated pages so the homepage stays fast and focused.
         </p>
 
         <div className="mt-8 grid gap-4 md:grid-cols-3">
@@ -152,7 +161,7 @@ export default async function MarketingHome({
           <ExploreCard
             href="/pricing"
             title="Pricing"
-            text="Start free. Upgrade anytime for 20, 75, or unlimited conversions."
+            text="Start free, upgrade when you need unlimited conversions."
           />
         </div>
       </section>
@@ -168,7 +177,7 @@ export default async function MarketingHome({
           </p>
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <Link
-              href={loginHref}
+              href={asRoute(loginHref)}
               className="inline-flex items-center justify-center rounded-xl bg-white px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-100"
             >
               Upload a file
@@ -185,7 +194,7 @@ export default async function MarketingHome({
         <footer className="mt-10 flex flex-col items-start justify-between gap-2 border-t border-gray-200 pt-6 text-xs text-gray-500 md:flex-row md:items-center">
           <div>© {new Date().getFullYear()} Convert My Email</div>
           <div className="flex flex-wrap gap-4">
-            <Link href={loginHref} className="hover:text-gray-700">
+            <Link href={asRoute(loginHref)} className="hover:text-gray-700">
               Sign in
             </Link>
             <Link href="/how-it-works" className="hover:text-gray-700">
@@ -208,7 +217,7 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 bg-white p-3">
       <div className="text-xs font-medium text-gray-700">{label}</div>
-      <div className="text-right text-xs text-gray-600">{value}</div>
+      <div className="text-xs text-gray-600 text-right">{value}</div>
     </div>
   );
 }
@@ -222,10 +231,18 @@ function Proof({ title, text }: { title: string; text: string }) {
   );
 }
 
-function ExploreCard({ href, title, text }: { href: string; title: string; text: string }) {
+function ExploreCard({
+  href,
+  title,
+  text,
+}: {
+  href: string;
+  title: string;
+  text: string;
+}) {
   return (
     <Link
-      href={href}
+      href={href as Route}
       className="group rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition hover:border-gray-300 hover:shadow"
     >
       <div className="text-sm font-semibold text-gray-900">{title}</div>
