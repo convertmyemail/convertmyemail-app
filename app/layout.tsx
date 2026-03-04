@@ -17,6 +17,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Google Search Console verification */}
+        <meta
+          name="google-site-verification"
+          content="29EFtUv1daprJNeB0w5XK_-nxTYodB4dFF6hvi8JOrY"
+        />
+
         {/* Light/Dark favicons */}
         <link rel="icon" href="/favicon-light.ico" media="(prefers-color-scheme: light)" />
         <link rel="icon" href="/favicon-dark.ico" media="(prefers-color-scheme: dark)" />
