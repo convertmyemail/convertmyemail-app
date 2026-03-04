@@ -42,18 +42,12 @@ export async function POST(req: Request) {
     const key = body.priceKey ?? body.plan;
 
     if (!isPriceKey(key)) {
-      return NextResponse.json(
-        { error: "Invalid priceKey", received: key },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid priceKey", received: key }, { status: 400 });
     }
 
     const priceId = PRICE_ID_BY_KEY[key];
     if (!priceId) {
-      return NextResponse.json(
-        { error: `Missing Stripe price env var for ${key}`, key },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: `Missing Stripe price env var for ${key}`, key }, { status: 500 });
     }
 
     // Bind cookies to request context (and support cookie-based auth)
@@ -77,23 +71,62 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: subErr.message }, { status: 500 });
     }
 
+    // ✅ Ensure we have a Stripe Customer AND it has metadata.user_id
+    // This makes customer.subscription.updated events resolvable back to your user.
+    let customerId = subRow?.stripe_customer_id || null;
+
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email ?? undefined,
+        metadata: { user_id: user.id },
+      });
+      customerId = customer.id;
+
+      // Persist it immediately so future checkouts reuse the same customer
+      const { error: upsertErr } = await supabase.from("subscriptions").upsert(
+        {
+          user_id: user.id,
+          stripe_customer_id: customerId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+
+      if (upsertErr) {
+        return NextResponse.json({ error: upsertErr.message }, { status: 500 });
+      }
+    } else {
+      // Keep metadata up to date (safe to call repeatedly)
+      await stripe.customers.update(customerId, {
+        metadata: { user_id: user.id },
+      });
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      ...(subRow?.stripe_customer_id ? { customer: subRow.stripe_customer_id } : {}),
-      customer_email: subRow?.stripe_customer_id ? undefined : user.email ?? undefined,
+      customer: customerId,
+
+      // ✅ Put user_id onto the Subscription itself (best for webhook mapping)
+      subscription_data: {
+        metadata: { user_id: user.id },
+      },
+
+      // Email optional now since we always have customer
+      customer_email: undefined,
+
       success_url: `${siteUrl()}/app?billing=success`,
       cancel_url: `${siteUrl()}/app?billing=cancelled`,
+
+      // Keep session metadata too (helpful for checkout.session.completed handler)
       metadata: { user_id: user.id, price_key: key },
     });
 
     return NextResponse.json({ url: session.url });
   } catch (e: any) {
-    const message =
-      e?.raw?.message || e?.message || "Stripe error";
+    const message = e?.raw?.message || e?.message || "Stripe error";
 
-    // Extra context for debugging “No such price”
     console.error("[api/stripe/checkout] error:", {
       message,
       type: e?.type,
@@ -104,10 +137,9 @@ export async function POST(req: Request) {
     return NextResponse.json(
       {
         error: message,
-        hint:
-          message.includes("No such price")
-            ? "Your STRIPE_*_PRICE_ID env vars do not match the Stripe mode/account of STRIPE_SECRET_KEY (test vs live, or wrong account)."
-            : undefined,
+        hint: message.includes("No such price")
+          ? "Your STRIPE_*_PRICE_ID env vars do not match the Stripe mode/account of STRIPE_SECRET_KEY (test vs live, or wrong account)."
+          : undefined,
       },
       { status: 500 }
     );

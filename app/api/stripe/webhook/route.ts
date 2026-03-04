@@ -40,6 +40,11 @@ function derivePlanFromSubscriptionItems(items: any[] | undefined | null): Plan 
   return planFromPriceId(matchedPriceId);
 }
 
+function toIsoFromUnixSeconds(sec: number | null | undefined): string | null {
+  if (!sec || typeof sec !== "number") return null;
+  return new Date(sec * 1000).toISOString();
+}
+
 async function rawBody(req: Request) {
   const ab = await req.arrayBuffer();
   return Buffer.from(ab);
@@ -63,8 +68,6 @@ async function resolvePlanFromSubscription(subscriptionId?: string | null): Prom
  * Demote rules:
  * - cancel-at-period-end should NOT demote immediately (Stripe keeps status active until period end)
  * - demote when Stripe indicates the subscription is not entitled anymore.
- *
- * Note: you previously demoted on past_due. Keeping that behavior (“cut access when not paid”).
  */
 function shouldDemoteToFree(status?: string): boolean {
   const s = String(status || "").toLowerCase();
@@ -130,10 +133,8 @@ export async function POST(req: Request) {
       try {
         if (subscriptionId) {
           const sub = await stripe.subscriptions.retrieve(subscriptionId);
-          const ps = (sub as any).current_period_start as number | undefined;
-          const pe = (sub as any).current_period_end as number | undefined;
-          periodStartIso = ps ? new Date(ps * 1000).toISOString() : null;
-          periodEndIso = pe ? new Date(pe * 1000).toISOString() : null;
+          periodStartIso = toIsoFromUnixSeconds((sub as any).current_period_start);
+          periodEndIso = toIsoFromUnixSeconds((sub as any).current_period_end);
 
           subStatus = ((sub as any).status as string | undefined) ?? null;
           cancelAtPeriodEnd = ((sub as any).cancel_at_period_end as boolean | undefined) ?? null;
@@ -155,17 +156,20 @@ export async function POST(req: Request) {
       });
 
       if (userId && subscriptionId) {
-        const { error } = await supabaseAdmin.from("subscriptions").upsert({
-          user_id: userId,
-          stripe_customer_id: customerId ?? null,
-          stripe_subscription_id: subscriptionId,
-          plan,
-          status: subStatus ?? "active",
-          cancel_at_period_end: cancelAtPeriodEnd ?? false,
-          current_period_start: periodStartIso,
-          current_period_end: periodEndIso,
-          updated_at: new Date().toISOString(),
-        });
+        const { error } = await supabaseAdmin.from("subscriptions").upsert(
+          {
+            user_id: userId,
+            stripe_customer_id: customerId ?? null,
+            stripe_subscription_id: subscriptionId,
+            plan,
+            status: (subStatus ?? "active").toLowerCase(),
+            cancel_at_period_end: cancelAtPeriodEnd ?? false,
+            current_period_start: periodStartIso,
+            current_period_end: periodEndIso,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
 
         if (error) {
           console.error("[stripe:webhook] Upsert FAILED:", error);
@@ -197,13 +201,11 @@ export async function POST(req: Request) {
       const derivedPlan = derivePlanFromSubscriptionItems((sub as any)?.items?.data);
 
       // ✅ Billing-cycle window (store BOTH start & end)
-      const periodStartUnix = (sub as any).current_period_start as number | undefined;
-      const periodEndUnix = (sub as any).current_period_end as number | undefined;
+      const periodStartIso = toIsoFromUnixSeconds((sub as any).current_period_start);
+      const periodEndIso = toIsoFromUnixSeconds((sub as any).current_period_end);
 
       // ✅ cancel-at-period-end flag
       const cancelAtPeriodEnd = ((sub as any).cancel_at_period_end as boolean | undefined) ?? false;
-
-      const endedAtUnix = (sub as any).ended_at as number | undefined;
 
       // Optional: log a "matched" price id for debugging
       const debugMatchedPriceId =
@@ -211,57 +213,80 @@ export async function POST(req: Request) {
           .map((i: any) => i?.price?.id)
           .find((id: any) => typeof id === "string" && PRICE_ID_TO_PLAN[id]) ?? null;
 
+      // ✅ BEST: resolve user_id directly from Stripe metadata if present
+      // (Set this during checkout session creation: subscription_data.metadata.user_id or customer metadata)
+      let userId: string | null =
+        ((sub as any)?.metadata?.user_id as string | undefined) ?? null;
+
+      if (!userId && customerId) {
+        try {
+          const cust = await stripe.customers.retrieve(customerId);
+          userId = ((cust as any)?.metadata?.user_id as string | undefined) ?? null;
+        } catch (e: any) {
+          console.warn("[stripe:webhook] Could not retrieve customer for metadata:", e?.message);
+        }
+      }
+
       console.log("[stripe:webhook] Subscription lifecycle event:", {
         subscriptionId,
         customerId,
         status,
         priceId: debugMatchedPriceId,
         derivedPlan,
-        periodStartUnix,
-        periodEndUnix,
+        periodStartIso,
+        periodEndIso,
         cancelAtPeriodEnd,
-        endedAtUnix,
+        userIdFromMetadata: userId,
       });
 
-      // Find existing row (so we know user_id)
-      const { data: row, error: selectError } = await supabaseAdmin
-        .from("subscriptions")
-        .select("user_id, plan")
-        .or(`stripe_subscription_id.eq.${subscriptionId},stripe_customer_id.eq.${customerId}`)
-        .maybeSingle();
+      // Fallback: find existing row in DB (older installs)
+      if (!userId) {
+        const { data: row, error: selectError } = await supabaseAdmin
+          .from("subscriptions")
+          .select("user_id")
+          .or(`stripe_subscription_id.eq.${subscriptionId},stripe_customer_id.eq.${customerId}`)
+          .maybeSingle();
 
-      if (selectError) {
-        console.error("[stripe:webhook] Select FAILED:", selectError);
-        throw new Error(selectError.message);
+        if (selectError) {
+          console.error("[stripe:webhook] Select FAILED:", selectError);
+          throw new Error(selectError.message);
+        }
+
+        userId = row?.user_id ?? null;
       }
 
-      if (row?.user_id) {
+      if (userId) {
         // ✅ Do NOT demote just because user scheduled cancellation (cancel_at_period_end).
-        // Stripe typically keeps status "active" until current_period_end anyway.
         // We only demote when Stripe indicates loss of entitlement via status.
         const demote = shouldDemoteToFree(status);
         const planToPersist: Plan = demote ? "free" : derivedPlan;
 
-        const { error: updateError } = await supabaseAdmin.from("subscriptions").upsert({
-          user_id: row.user_id,
-          stripe_customer_id: customerId ?? null,
-          stripe_subscription_id: subscriptionId,
-          status,
-          plan: planToPersist,
-          cancel_at_period_end: cancelAtPeriodEnd,
-          current_period_start: periodStartUnix ? new Date(periodStartUnix * 1000).toISOString() : null,
-          current_period_end: periodEndUnix ? new Date(periodEndUnix * 1000).toISOString() : null,
-          updated_at: new Date().toISOString(),
-        });
+        const { error: upsertError } = await supabaseAdmin.from("subscriptions").upsert(
+          {
+            user_id: userId,
+            stripe_customer_id: customerId ?? null,
+            stripe_subscription_id: subscriptionId,
+            status,
+            plan: planToPersist,
+            cancel_at_period_end: cancelAtPeriodEnd,
+            current_period_start: periodStartIso,
+            current_period_end: periodEndIso,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
 
-        if (updateError) {
-          console.error("[stripe:webhook] Subscription update FAILED:", updateError);
-          throw new Error(updateError.message);
+        if (upsertError) {
+          console.error("[stripe:webhook] Subscription upsert FAILED:", upsertError);
+          throw new Error(upsertError.message);
         }
 
-        console.log("[stripe:webhook] Subscription update SUCCESS");
+        console.log("[stripe:webhook] Subscription upsert SUCCESS");
       } else {
-        console.warn("[stripe:webhook] No existing subscription row found.");
+        console.warn("[stripe:webhook] Could not resolve user_id. No DB write performed.", {
+          subscriptionId,
+          customerId,
+        });
       }
     }
 
