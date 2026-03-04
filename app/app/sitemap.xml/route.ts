@@ -1,6 +1,3 @@
-// app/sitemap.xml/route.ts
-export const runtime = "nodejs";
-
 export async function GET() {
   const baseUrl = "https://convertmyemail.com";
 
@@ -9,7 +6,6 @@ export async function GET() {
     "/pricing",
     "/how-it-works",
     "/how-to-save-eml",
-    "/login",
   ];
 
   const body = `<?xml version="1.0" encoding="UTF-8"?>
@@ -24,11 +20,8 @@ ${urls
 </urlset>`;
 
   return new Response(body, {
-    status: 200,
     headers: {
-      "Content-Type": "application/xml; charset=utf-8",
-      // cache a bit (optional)
-      "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+      "Content-Type": "application/xml",
     },
   });
 }
