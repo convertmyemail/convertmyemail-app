@@ -109,7 +109,7 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
       limit: opts?.limit ?? usageLimit,
       message:
         opts?.message ??
-        "Your free plan limit has been reached. Upgrade to keep converting instantly — no waiting until next month.",
+        "You've used your 3 free conversions.\nUpgrade to Starter to convert 20 emails per month.",
     });
   };
 
@@ -284,10 +284,11 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
 
           limitFromServer = readNumber(j, "free_limit") ?? readNumber(j, "limit") ?? undefined;
 
+          // ✅ Force our desired copy on limit reached (don’t rely on server message)
           openLimitModal({
             used: usedFromServer,
             limit: limitFromServer,
-            message: messageStr || errStr || undefined,
+            message: "You've used your 3 free conversions.\nUpgrade to Starter to convert 20 emails per month.",
           });
 
           msg =
@@ -327,7 +328,10 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
   };
 
   const showUsage = !!effectiveUsage && !usageLoading;
-  const limitHit = !isPro && typeof usageRemaining === "number" && usageRemaining <= 0;
+
+  // ✅ Only treat as “limit hit” when there is a numeric remaining and it’s <= 0
+  // (Paid plans have remaining=null; those should NEVER be blocked by this check.)
+  const limitHit = typeof usageRemaining === "number" && usageRemaining <= 0;
 
   return (
     <>
@@ -350,9 +354,9 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="text-xl font-semibold text-gray-900">⚡ Monthly limit reached</div>
-                <div className="mt-1 text-sm text-gray-600">
+                <div className="mt-1 whitespace-pre-line text-sm text-gray-600">
                   {limitModal.message ||
-                    "Your free plan limit has been reached. Upgrade to keep converting instantly — no waiting until next month."}
+                    "You've used your 3 free conversions.\nUpgrade to Starter to convert 20 emails per month."}
                 </div>
               </div>
 
@@ -576,26 +580,17 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
           </div>
         </div>
 
-        {/* ✅ Improved dashboard upsell messaging */}
+        {/* ✅ Improved dashboard upsell messaging (exact copy requested) */}
         {!isPro && showUsage && usageRemaining !== null && (
           <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-gray-900">⚡ You’re on the Free plan</div>
 
-                <div className="mt-1 text-sm text-gray-600">
-                  {usageRemaining <= 0 ? (
-                    <span className="font-medium text-gray-900">🔒 Monthly limit reached.</span>
-                  ) : usageRemaining === 1 ? (
-                    <span className="font-medium text-gray-900">
-                      ⚠ Only 1 conversion remaining this month.
-                    </span>
-                  ) : (
-                    <>
-                      {usageUsed} of {usageLimit} used this month —{" "}
-                      <span className="font-medium">{usageRemaining} remaining</span>
-                    </>
-                  )}
+                <div className="mt-1 whitespace-pre-line text-sm text-gray-600">
+                  {usageRemaining <= 0
+                    ? "You've used your 3 free conversions.\nUpgrade to Starter to convert 20 emails per month."
+                    : `${usageUsed} of ${usageLimit} used this month — ${usageRemaining} remaining`}
                 </div>
 
                 <div className="mt-1 text-xs text-gray-500">
@@ -606,10 +601,10 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-                  onClick={() => handleUpgrade("pro")}
+                  onClick={() => handleUpgrade("starter")}
                   type="button"
                 >
-                  Upgrade to Pro – $19/mo
+                  Upgrade to Starter – $9/mo
                 </button>
 
                 <button
@@ -694,10 +689,10 @@ export default function UploadPageClient({ usage }: { usage: UsageInfo }) {
               {!isPro && /limit reached/i.test(status) && (
                 <button
                   className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-black"
-                  onClick={() => handleUpgrade("pro")}
+                  onClick={() => handleUpgrade("starter")}
                   type="button"
                 >
-                  Upgrade
+                  Upgrade to Starter
                 </button>
               )}
             </div>
