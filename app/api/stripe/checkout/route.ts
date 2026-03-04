@@ -52,41 +52,50 @@ export async function POST(req: Request) {
     }
 
     // ✅ Support BOTH cookie auth (browser) and Authorization Bearer (API callers)
+    // ✅ Bearer path uses service-role verification to avoid SSR/cookie/header quirks
     const authHeader = req.headers.get("authorization") || "";
     const isBearer = authHeader.toLowerCase().startsWith("bearer ");
+    const jwt = isBearer ? authHeader.slice("bearer ".length).trim() : "";
 
-    let supabase: any;
+    let user: any = null;
+    let supabase: any = null;
 
-    if (isBearer) {
+    if (jwt) {
       const { createClient } = await import("@supabase/supabase-js");
 
       const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
-      const supabaseAnon = requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+      const serviceRole = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-      supabase = createClient(supabaseUrl, supabaseAnon, {
+      // Admin client for JWT validation
+      const supabaseAdmin = createClient(supabaseUrl, serviceRole, {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
           detectSessionInUrl: false,
         },
-        global: {
-          headers: {
-            authorization: authHeader,
-          },
-        },
       });
+
+      const { data, error } = await supabaseAdmin.auth.getUser(jwt);
+      if (error || !data?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+
+      user = data.user;
+
+      // Reuse the admin client for DB reads/writes in this request
+      supabase = supabaseAdmin;
     } else {
       // Cookie-based auth (normal browser flow)
       await cookies();
       supabase = await createSupabaseServerClient();
-    }
 
-    const { data: authData, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !authData?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr || !authData?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
 
-    const user = authData.user;
+      user = authData.user;
+    }
 
     const { data: subRow, error: subErr } = await supabase
       .from("subscriptions")
