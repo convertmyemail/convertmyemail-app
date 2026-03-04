@@ -4,7 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Convert My Email",
+  title: "Convert EML Files to Excel, CSV or PDF | ConvertMyEmail",
   description: "Convert .eml files to clean Excel and court-ready PDFs.",
 };
 
