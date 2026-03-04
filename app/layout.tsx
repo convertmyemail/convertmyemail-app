@@ -5,7 +5,17 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Convert EML Files to Excel, CSV or PDF | ConvertMyEmail",
-  description: "Convert .eml files to clean Excel and court-ready PDFs.",
+  description:
+    "Free online tool to convert EML email files into Excel spreadsheets, CSV files, or court-ready PDFs. Upload .eml files and download structured email data instantly.",
+
+  openGraph: {
+    title: "Convert EML Files to Excel, CSV or PDF | ConvertMyEmail",
+    description:
+      "Upload .eml files and instantly convert them into Excel spreadsheets, CSV files, or court-ready PDFs.",
+    url: "https://convertmyemail.com",
+    siteName: "ConvertMyEmail",
+    type: "website",
+  },
 };
 
 export const viewport = {
@@ -24,8 +34,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
 
         {/* Light/Dark favicons */}
-        <link rel="icon" href="/favicon-light.ico" media="(prefers-color-scheme: light)" />
-        <link rel="icon" href="/favicon-dark.ico" media="(prefers-color-scheme: dark)" />
+        <link
+          rel="icon"
+          href="/favicon-light.ico"
+          media="(prefers-color-scheme: light)"
+        />
+        <link
+          rel="icon"
+          href="/favicon-dark.ico"
+          media="(prefers-color-scheme: dark)"
+        />
 
         {/* Apple touch icon */}
         <link rel="apple-touch-icon" href="/apple-icon.png" />
