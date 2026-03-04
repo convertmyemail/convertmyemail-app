@@ -39,10 +39,11 @@ export async function POST(req: Request) {
       plan?: string;
     };
 
-    const key = body.priceKey ?? body.plan;
+    const raw = body.priceKey ?? body.plan;
+    const key = typeof raw === "string" ? raw.toLowerCase().trim() : raw;
 
     if (!isPriceKey(key)) {
-      return NextResponse.json({ error: "Invalid priceKey", received: key }, { status: 400 });
+      return NextResponse.json({ error: "Invalid priceKey", received: raw }, { status: 400 });
     }
 
     const priceId = PRICE_ID_BY_KEY[key];
@@ -50,9 +51,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Missing Stripe price env var for ${key}`, key }, { status: 500 });
     }
 
-    // Bind cookies to request context (and support cookie-based auth)
-    await cookies();
-    const supabase = await createSupabaseServerClient();
+    // ✅ Support BOTH cookie auth (browser) and Authorization Bearer (API callers)
+    const authHeader = req.headers.get("authorization") || "";
+    const isBearer = authHeader.toLowerCase().startsWith("bearer ");
+
+    let supabase: any;
+
+    if (isBearer) {
+      const { createClient } = await import("@supabase/supabase-js");
+
+      const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
+      const supabaseAnon = requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+
+      supabase = createClient(supabaseUrl, supabaseAnon, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+        global: {
+          headers: {
+            authorization: authHeader,
+          },
+        },
+      });
+    } else {
+      // Cookie-based auth (normal browser flow)
+      await cookies();
+      supabase = await createSupabaseServerClient();
+    }
 
     const { data: authData, error: authErr } = await supabase.auth.getUser();
     if (authErr || !authData?.user) {
@@ -75,14 +102,13 @@ export async function POST(req: Request) {
     // This makes customer.subscription.updated events resolvable back to your user.
     let customerId = subRow?.stripe_customer_id || null;
 
-    if (!customerId) {
+    async function createAndPersistCustomer() {
       const customer = await stripe.customers.create({
         email: user.email ?? undefined,
         metadata: { user_id: user.id },
       });
       customerId = customer.id;
 
-      // Persist it immediately so future checkouts reuse the same customer
       const { error: upsertErr } = await supabase.from("subscriptions").upsert(
         {
           user_id: user.id,
@@ -93,13 +119,24 @@ export async function POST(req: Request) {
       );
 
       if (upsertErr) {
-        return NextResponse.json({ error: upsertErr.message }, { status: 500 });
+        throw new Error(upsertErr.message);
       }
+    }
+
+    if (!customerId) {
+      await createAndPersistCustomer();
     } else {
-      // Keep metadata up to date (safe to call repeatedly)
-      await stripe.customers.update(customerId, {
-        metadata: { user_id: user.id },
-      });
+      // Keep metadata up to date; if customer id is stale (test/live mismatch), recreate
+      try {
+        await stripe.customers.update(customerId, {
+          email: user.email ?? undefined,
+          metadata: { user_id: user.id },
+        });
+      } catch (e: any) {
+        const msg = String(e?.raw?.message || e?.message || "");
+        console.warn("[api/stripe/checkout] customer update failed, recreating customer:", msg);
+        await createAndPersistCustomer();
+      }
     }
 
     const session = await stripe.checkout.sessions.create({
